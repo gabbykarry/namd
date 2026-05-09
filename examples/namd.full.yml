@@ -1,0 +1,100 @@
+version: "1"
+
+# Who you are on the namd network.
+# name becomes your @handle and your subdomain: gabriel.namd.africa
+identity:
+  name: gabriel
+  region: af-west
+
+# Domain config — how your tunnel is reached from the internet.
+domain:
+  # Option A: bring your own domain
+  # custom: gabrielbuilds.dev
+
+  # Option B: namd subdomain (default)
+  subdomain: gabriel
+
+  ssl:
+    provider: letsencrypt
+    email: gabriel@example.com
+    auto_renew: true
+
+  # Fallback pool — tried in order if namd.africa is unavailable
+  fallback_pool:
+    - namd.africa
+    - namd.is-a.dev
+
+# Tunnel definitions — what local services to expose
+tunnels:
+  api:
+    proto: http
+    addr: "3000"
+    subdomain: gabriel       # gabriel.namd.africa
+    auth:
+      type: bearer
+      token: ${NAMD_TOKEN}   # read from environment — never hardcode
+
+# Load balancer — distribute traffic across multiple local instances
+# Comment this out if you only have one local server
+load_balancer:
+  api:
+    strategy: round_robin    # round_robin | least_conn | random
+    targets:
+      - addr: "3000"
+      - addr: "3001"
+      - addr: "3002"
+    health_check:
+      path: /health
+      interval: 10s
+
+# Webhook relay — intercept and store webhook events
+webhooks:
+  relay:
+    - name: payments
+      tunnel: api
+      path: /webhooks/payment
+      adapter: paystack        # paystack | flutterwave | github | generic
+      store: true              # save events to ~/.namd/webhooks/payments/
+      replay: true             # allow: namd webhook replay payments
+
+    - name: github-events
+      tunnel: api
+      path: /webhooks/github
+      adapter: github
+      store: true
+      replay: true
+
+# Firewall — IP filtering per tunnel
+firewall:
+  api:
+    allow:
+      - 0.0.0.0/0             # allow all — remove to restrict
+    rate_limit:
+      requests: 100
+      window: 60s
+
+# Offline cache — serve cached responses when internet drops
+cache:
+  enabled: true
+  ttl: 5m
+  targets:
+    - https://api.paystack.co
+    - https://api.flutterwave.com
+
+# Handoff — transfer your running server to a trusted peer
+handoff:
+  max_duration: 60m
+  sandbox: docker
+  trusted_peers:
+    - "@tunde"
+    - "@chidi"
+
+# Team mesh — share tunnels privately within your team
+mesh:
+  team: my-team
+  secret: ${MESH_SECRET}
+
+# Dashboard — web UI at http://localhost:5555
+dashboard:
+  port: 5555
+  enabled: true

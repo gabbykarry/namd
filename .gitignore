@@ -1,0 +1,21 @@
+# Build output
+/bin/
+
+# Personal config — contains secrets, never commit
+namd.yml
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# namd runtime data
+~/.namd/

@@ -1,0 +1,14 @@
+version: "1"
+
+identity:
+  name: yourname        # becomes yourname.namd.africa
+  region: af-west       # af-west | af-east | af-south
+
+tunnels:
+  api:
+    proto: http
+    addr: "3000"        # your local app port
+
+dashboard:
+  port: 5555
+  enabled: true

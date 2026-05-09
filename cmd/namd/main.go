@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gabbykarry/namd/internal/cache"
 	"github.com/gabbykarry/namd/internal/config"
 	"github.com/gabbykarry/namd/internal/dashboard"
 	"github.com/gabbykarry/namd/internal/loadbalancer"
@@ -93,6 +94,20 @@ func runStart(configPath string) error {
 		} else {
 			log.Printf("[namd] webhook relay: %d relay(s) configured", len(cfg.Webhooks.Relay))
 		}
+	}
+
+	// ── Offline cache proxy ───────────────────────────────────────────────────
+	// If cache is enabled in namd.yml, start a local HTTP proxy on :7777.
+	// The developer sets HTTP_PROXY=http://localhost:7777 in their app.
+	// All outgoing requests to configured targets are cached locally.
+	if cfg.Cache.Enabled && len(cfg.Cache.Targets) > 0 {
+		ttl, err := time.ParseDuration(cfg.Cache.TTL)
+		if err != nil {
+			ttl = 5 * time.Minute // default if TTL is invalid
+		}
+		cacheProxy := cache.NewProxy(cfg.Cache.Targets, ttl, 7777)
+		go cacheProxy.Start()
+		log.Printf("[namd] cache proxy: %d target(s) cached for %s", len(cfg.Cache.Targets), ttl)
 	}
 
 	serverAddr := resolveServerAddr(cfg)

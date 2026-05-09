@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gabbykarry/namd/internal/dashboard"
+	"github.com/gabbykarry/namd/internal/loadbalancer"
 	"github.com/gabbykarry/namd/internal/transport"
 )
 
@@ -19,34 +20,26 @@ func main() {
 	localAddr := flag.String("local", "3000", "local port your app runs on")
 	serverAddr := flag.String("server", "localhost:9000", "namd server address")
 	dashPort := flag.Int("dash", 5555, "dashboard port")
+	strategy := flag.String("strategy", "round_robin", "load balancer strategy: round_robin, least_conn, random")
+	targets := flag.String("targets", "", "comma-separated target ports e.g. 3000,3001,3002")
 	flag.Parse()
 
 	if *name == "" {
 		log.Fatal("client: --name is required")
 	}
 
-	// ── Stats store ───────────────────────────────────────────────────────────
-	// One Stats instance shared between the stream handler and the dashboard.
-	// Both get a pointer — they read/write the same memory safely via RWMutex.
 	stats := dashboard.NewStats()
-
-	// ── Dashboard ─────────────────────────────────────────────────────────────
-	// Start dashboard in its own goroutine — runs concurrently with the tunnel.
-	// It never stops — lives until the process exits.
 	dash := dashboard.NewServer(*dashPort, stats)
 	go dash.Start()
 
-	// ── Dial the server ───────────────────────────────────────────────────────
 	log.Printf("client: connecting to %s", *serverAddr)
 	conn, err := net.Dial("tcp", *serverAddr)
 	if err != nil {
 		log.Fatalf("client: cannot connect: %v", err)
 	}
 
-	// Send HELLO on raw conn before yamux takes over.
 	fmt.Fprintf(conn, "HELLO %s\n", *name)
 
-	// ── Wrap in yamux ─────────────────────────────────────────────────────────
 	session, err := transport.WrapClientSide(*name, conn)
 	if err != nil {
 		log.Fatalf("client: yamux setup failed: %v", err)
@@ -56,7 +49,6 @@ func main() {
 		stats.ClearTunnel()
 	}()
 
-	// ── Read control stream ───────────────────────────────────────────────────
 	ctrlStream, err := session.AcceptStream()
 	if err != nil {
 		log.Fatalf("client: cannot accept control stream: %v", err)
@@ -75,116 +67,126 @@ func main() {
 	}
 
 	publicURL := strings.TrimPrefix(response, "OK ")
-	log.Printf("client: ✓ tunnel active → http://%s → localhost:%s", publicURL, *localAddr)
-	log.Printf("client: dashboard → http://localhost:%d", *dashPort)
+	log.Printf("client: tunnel active  -> http://%s", publicURL)
+	log.Printf("client: dashboard      -> http://localhost:%d", *dashPort)
 
-	// Record tunnel as active in stats — dashboard will show it immediately.
 	stats.SetTunnel(*name, publicURL)
 
-	local := *localAddr
-	if !strings.Contains(local, ":") {
-		local = "localhost:" + local
+	// ── Load balancer setup ───────────────────────────────────────────────────
+	// Build the list of target addresses.
+	// If --targets flag is provided, parse it: "3000,3001,3002"
+	// Otherwise fall back to the single --local address.
+	//
+	// loadbalancer.New() returns the right strategy implementation.
+	// All strategies satisfy the Balancer interface so handleStream
+	// only calls lb.Next() — it never knows which strategy is running.
+	var addrs []string
+	if *targets != "" {
+		for _, t := range strings.Split(*targets, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				addrs = append(addrs, t)
+			}
+		}
+	}
+	if len(addrs) == 0 {
+		addrs = []string{*localAddr}
 	}
 
+	lb, err := loadbalancer.New(*strategy, addrs)
+	if err != nil {
+		log.Fatalf("client: load balancer error: %v", err)
+	}
+
+	log.Printf("client: load balancer  -> strategy=%s targets=%v", *strategy, addrs)
+
 	// ── Stream accept loop ────────────────────────────────────────────────────
+	// Each accepted stream is one inbound request.
+	// We pass lb so each request picks its own target.
 	for {
 		stream, err := session.AcceptStream()
 		if err != nil {
 			log.Printf("client: session closed: %v", err)
 			return
 		}
-		go handleStream(stream, local, *name, stats)
+		go handleStream(stream, lb, *name, stats)
 	}
 }
 
 // handleStream handles one yamux stream — one HTTP request/response cycle.
-//
-// We use http.ReadRequest and http.ReadResponse to parse both sides cleanly.
-// Method, path, and status code are captured without any goroutine races.
-// No TeeReader, no shared buffer writes, no CloseWrite type assertions.
-func handleStream(stream net.Conn, local, tunnelName string, stats *dashboard.Stats) {
+// lb.Next() decides which local backend to dial for this request.
+func handleStream(stream net.Conn, lb loadbalancer.Balancer, tunnelName string, stats *dashboard.Stats) {
 	defer stream.Close()
 
 	start := time.Now()
 
-	// Parse the HTTP request from the stream.
-	// http.ReadRequest reads the request line and headers into *http.Request.
-	// The body stays buffered in streamReader — not consumed yet.
-	// We capture method and path immediately — no goroutine has started yet,
-	// so there is zero race on these variables.
+	// Parse the HTTP request.
 	streamReader := bufio.NewReader(stream)
 	req, err := http.ReadRequest(streamReader)
 	if err != nil {
-		log.Printf("client: error reading request from stream: %v", err)
+		log.Printf("client: error reading request: %v", err)
 		return
 	}
 
 	method := req.Method
 	path := req.URL.Path
 
-	// Dial the local app fresh for this request.
-	localConn, err := net.Dial("tcp", local)
+	// Ask the load balancer for the next target address.
+	// For single-target setups this always returns the same address.
+	// For multi-target setups it rotates / picks least conn / picks random.
+	addr, err := lb.Next()
 	if err != nil {
-		log.Printf("client: cannot reach %s: %v", local, err)
+		log.Printf("client: no healthy targets: %v", err)
+		stream.Write([]byte("HTTP/1.0 503 Service Unavailable\r\n\r\nNo healthy backends.\n"))
+		stats.RecordRequest(dashboard.RequestLog{
+			Method: method, Path: path, StatusCode: 503,
+			Duration: time.Since(start), Timestamp: start, TunnelName: tunnelName,
+		})
+		return
+	}
+
+	// Dial the selected target.
+	localConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		log.Printf("client: cannot reach %s: %v", addr, err)
 		stream.Write([]byte("HTTP/1.0 502 Bad Gateway\r\n\r\nLocal app is not running.\n"))
 		stats.RecordRequest(dashboard.RequestLog{
-			Method:     method,
-			Path:       path,
-			StatusCode: 502,
-			Duration:   time.Since(start),
-			Timestamp:  start,
-			TunnelName: tunnelName,
+			Method: method, Path: path, StatusCode: 502,
+			Duration: time.Since(start), Timestamp: start, TunnelName: tunnelName,
 		})
 		return
 	}
 	defer localConn.Close()
 
-	// Forward the full HTTP request to the local app.
-	// req.Write serialises the parsed request back to HTTP wire format.
-	// req.Body wraps streamReader — any POST/PUT body bytes are read lazily
-	// from the stream as req.Write serialises them. Nothing is lost.
+	// Forward request.
 	if err := req.Write(localConn); err != nil {
-		log.Printf("client: error forwarding request to local: %v", err)
+		log.Printf("client: error forwarding request to %s: %v", addr, err)
 		return
 	}
 
-	// Read and parse the HTTP response from the local app.
-	// http.ReadResponse gives us resp.StatusCode directly — no string parsing needed.
-	// resp.Body is lazy — it wraps localReader and reads on demand.
+	// Read and forward response.
 	localReader := bufio.NewReader(localConn)
 	resp, err := http.ReadResponse(localReader, req)
 	if err != nil {
-		log.Printf("client: error reading local response: %v", err)
+		log.Printf("client: error reading response from %s: %v", addr, err)
 		stats.RecordRequest(dashboard.RequestLog{
-			Method:     method,
-			Path:       path,
-			StatusCode: 0,
-			Duration:   time.Since(start),
-			Timestamp:  start,
-			TunnelName: tunnelName,
+			Method: method, Path: path, StatusCode: 0,
+			Duration: time.Since(start), Timestamp: start, TunnelName: tunnelName,
 		})
 		return
 	}
 
 	statusCode := resp.StatusCode
-
-	// Forward the full response back through the stream to the server to the browser.
-	// resp.Write serialises status line + headers + body to stream.
-	// Body bytes are read lazily from localReader as Write runs.
 	if err := resp.Write(stream); err != nil {
-		log.Printf("client: error forwarding response to stream: %v", err)
+		log.Printf("client: error forwarding response: %v", err)
 	}
 	resp.Body.Close()
 
 	duration := time.Since(start)
-	log.Printf("client: %s %s -> %d (%s)", method, path, statusCode, duration.Round(time.Millisecond))
+	log.Printf("client: %s %s -> %s -> %d (%s)", method, path, addr, statusCode, duration.Round(time.Millisecond))
 
 	stats.RecordRequest(dashboard.RequestLog{
-		Method:     method,
-		Path:       path,
-		StatusCode: statusCode,
-		Duration:   duration,
-		Timestamp:  start,
-		TunnelName: tunnelName,
+		Method: method, Path: path, StatusCode: statusCode,
+		Duration: duration, Timestamp: start, TunnelName: tunnelName,
 	})
 }

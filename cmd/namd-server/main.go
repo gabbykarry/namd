@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"os"
 
+	"github.com/gabbykarry/namd/internal/admin"
 	"github.com/gabbykarry/namd/internal/auth"
 	"github.com/gabbykarry/namd/internal/firewall"
 	"github.com/gabbykarry/namd/internal/transport"
@@ -101,26 +102,34 @@ func main() {
 	fw := firewall.NewEngine(nil)
 	cfg := loadServerConfig()
 	slog := logger.New("server")
+	adminStore := admin.NewServerStore()
+	adminToken := os.Getenv("NAMD_ADMIN_TOKEN")
 
 	slog.Info("starting", logger.Fields{
 		"tunnel_port":   9000,
 		"public_port":   8080,
 		"broker_port":   9001,
 		"registry_port": 9002,
+		"admin_port":    9003,
 		"tls":           cfg.TLSEnabled,
 		"max_streams":   cfg.MaxStreams,
 		"max_body_mb":   cfg.MaxBodyMB,
+		"admin_enabled": adminToken != "",
 	})
 
-	go listenForClients(registry, accounts, cfg)
+	go listenForClients(registry, accounts, cfg, adminStore)
 	go listenHandoffBroker(broker)
-	go listenRegistry(accounts)
+	go listenRegistry(accounts, adminStore)
+	go func() {
+		adminSrv := admin.NewServer(9003, adminToken, adminStore)
+		adminSrv.Start()
+	}()
 	listenForPublicTraffic(registry, fw, cfg)
 }
 
 // ── :9000 — tunnel client listener ───────────────────────────────────────────
 
-func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore, cfg serverConfig) {
+func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore, cfg serverConfig, adminStore *admin.ServerStore) {
 	var ln net.Listener
 	var err error
 
@@ -149,11 +158,11 @@ func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore, cf
 			log.Printf("[server] accept error: %v", err)
 			return
 		}
-		go handleClient(conn, registry, accounts, cfg)
+		go handleClient(conn, registry, accounts, cfg, adminStore)
 	}
 }
 
-func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.AccountStore, cfg serverConfig) {
+func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.AccountStore, cfg serverConfig, adminStore *admin.ServerStore) {
 	defer conn.Close()
 
 	clientIP := conn.RemoteAddr().String()
@@ -199,6 +208,13 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 		return
 	}
 
+	// Check if account is banned.
+	if adminStore != nil && adminStore.IsBanned(name) {
+		fmt.Fprintf(conn, "ERROR account is suspended\n")
+		slog.Audit("auth_failed", logger.Fields{"name": name, "ip": clientIP, "reason": "banned"})
+		return
+	}
+
 	// Send AUTH_OK on the raw conn BEFORE yamux wraps it.
 	// The client peeks for this to confirm auth passed.
 	// After this line both sides immediately wrap in yamux.
@@ -237,6 +253,16 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 	fmt.Fprintf(ctrlStream, "OK %s\n", publicURL)
 	ctrlStream.Close()
 	log.Printf("[server] tunnel registered for %q -> http://%s", name, publicURL)
+
+	// Register in admin store so admin panel shows this tunnel.
+	// Pass a disconnect function so admin can force-close it.
+	if adminStore != nil {
+		adminStore.UpdateLastSeen(name)
+		adminStore.AddTunnel(name, publicURL, clientIP, func() {
+			session.Close()
+		})
+		defer adminStore.RemoveTunnel(name)
+	}
 
 	for {
 		_, err := session.AcceptStream()
@@ -547,7 +573,7 @@ func brokerHandoff(senderConn net.Conn, broker *handoffBroker, from, to, subdoma
 // listenRegistry handles two things on :9002:
 //  1. New account registration: client sends RegisterRequest JSON
 //  2. Peer lookup: handoff sender asks if a peer exists and is online
-func listenRegistry(accounts *auth.AccountStore) {
+func listenRegistry(accounts *auth.AccountStore, adminStore *admin.ServerStore) {
 	ln, err := net.Listen("tcp", ":9002")
 	if err != nil {
 		log.Fatalf("[registry] cannot listen :9002: %v", err)
@@ -561,11 +587,11 @@ func listenRegistry(accounts *auth.AccountStore) {
 			log.Printf("[registry] accept error: %v", err)
 			return
 		}
-		go handleRegistryConn(conn, accounts)
+		go handleRegistryConn(conn, accounts, adminStore)
 	}
 }
 
-func handleRegistryConn(conn net.Conn, accounts *auth.AccountStore) {
+func handleRegistryConn(conn net.Conn, accounts *auth.AccountStore, adminStore *admin.ServerStore) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
@@ -608,6 +634,9 @@ func handleRegistryConn(conn net.Conn, accounts *auth.AccountStore) {
 	}
 
 	log.Printf("[registry] registered @%s", req.Name)
+	if adminStore != nil {
+		adminStore.RegisterAccount(req.Name, req.Email, "")
+	}
 	resp := auth.RegisterResponse{Success: true, Name: req.Name, Message: "registered successfully"}
 	writeJSON(conn, resp)
 }

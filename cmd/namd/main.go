@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -261,8 +262,17 @@ func runStart(configPath string) error {
 		return fmt.Errorf("unexpected auth response: %q", authResp)
 	}
 	// AUTH_OK received — both sides now wrap in yamux
+	//
+	// IMPORTANT: preReader may have buffered bytes beyond AUTH_OK\n.
+	// yamux must read those buffered bytes first before reading from conn.
+	// We create a multiReader: drain preReader buffer → then read raw conn.
+	// This ensures yamux sees the complete byte stream with nothing missing.
+	multiConn := &readerConn{
+		Reader: io.MultiReader(preReader, conn),
+		Conn:   conn,
+	}
 
-	session, err := transport.WrapClientSide(cfg.Identity.Name, conn)
+	session, err := transport.WrapClientSide(cfg.Identity.Name, multiConn)
 	if err != nil {
 		return fmt.Errorf("yamux setup: %w", err)
 	}
@@ -637,4 +647,16 @@ func runAuthRegister(name, email, serverAddr string) error {
 	fmt.Printf("  Stored:  ~/.namd/credentials\n")
 	fmt.Printf("\nYou can now run: namd start\n")
 	return nil
+}
+
+// readerConn wraps a net.Conn but replaces its Reader with a custom io.Reader.
+// Used to inject a buffered reader (with pre-read bytes) in front of a net.Conn
+// so yamux reads the complete byte stream including any buffered bytes.
+type readerConn struct {
+	io.Reader
+	net.Conn
+}
+
+func (r *readerConn) Read(b []byte) (int, error) {
+	return r.Reader.Read(b)
 }

@@ -1,8 +1,7 @@
-MODULE := github.com/gabbykarry/namd
-GO     := go
-BIN    := ./bin
-
-VPS_HOST ?= your-vps-ip
+MODULE   := github.com/gabbykarry/namd
+GO       := go
+BIN      := ./bin
+VPS_HOST ?= 159.89.0.78
 VPS_USER ?= root
 VPS_KEY  ?= ~/.ssh/id_rsa
 
@@ -71,9 +70,33 @@ deploy: build-linux
 logs:
 	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "journalctl -u namd-server -f --no-pager"
 
+.PHONY: admin
+admin:
+	ssh -i $(VPS_KEY) -L 9003:localhost:9003 $(VPS_USER)@$(VPS_HOST)
+
+.PHONY: server-status
+server-status:
+	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "systemctl status namd-server --no-pager"
+
+.PHONY: server-restart
+server-restart:
+	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "systemctl restart namd-server && systemctl status namd-server --no-pager"
+
+.PHONY: server-stop
+server-stop:
+	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "systemctl stop namd-server"
+
+.PHONY: ssh
+ssh:
+	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST)
+
 .PHONY: run
 run:
 	$(GO) run ./cmd/namd start
+
+.PHONY: run-tls-off
+run-tls-off:
+	NAMD_TLS=false $(GO) run ./cmd/namd start
 
 .PHONY: run-server
 run-server:
@@ -83,6 +106,11 @@ run-server:
 test:
 	$(GO) test -race ./...
 
+.PHONY: lint
+lint:
+	golangci-lint run ./...
+
 .PHONY: clean
 clean:
 	@rm -rf $(BIN)
+	@echo "Cleaned"

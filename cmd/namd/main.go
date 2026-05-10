@@ -202,10 +202,20 @@ func runStart(configPath string) error {
 	// Use TLS if NAMD_TLS=true or if connecting to a non-localhost address.
 	// TLS encrypts the token and all tunnel traffic — always use in production.
 	// Local development (localhost) uses plain TCP by default for simplicity.
-	useTLS := os.Getenv("NAMD_TLS") == "true"
-	if !strings.HasPrefix(serverAddr, "localhost") && !strings.HasPrefix(serverAddr, "127.0.0.1") {
-		// Non-localhost = production server = always use TLS.
+	// TLS logic:
+	// NAMD_TLS=false → always plain TCP (override for dev/testing)
+	// NAMD_TLS=true  → always TLS
+	// default (not set) → TLS only for non-localhost
+	namdTLS := os.Getenv("NAMD_TLS")
+	var useTLS bool
+	switch namdTLS {
+	case "false":
+		useTLS = false
+	case "true":
 		useTLS = true
+	default:
+		// Auto: use TLS for non-localhost addresses
+		useTLS = !strings.HasPrefix(serverAddr, "localhost") && !strings.HasPrefix(serverAddr, "127.0.0.1")
 	}
 
 	var conn net.Conn

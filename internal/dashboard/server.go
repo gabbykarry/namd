@@ -11,9 +11,10 @@ import (
 
 // Server is the dashboard HTTP + WebSocket server.
 type Server struct {
-	port  int
-	stats *Stats
-	mux   *http.ServeMux
+	port       int
+	stats      *Stats
+	mux        *http.ServeMux
+	replayFunc func(relayName string) error // called when user clicks replay
 }
 
 func NewServer(port int, stats *Stats) *Server {
@@ -29,6 +30,12 @@ func NewServer(port int, stats *Stats) *Server {
 	s.mux.HandleFunc("/api/webhook/replay", s.handleWebhookReplay)
 
 	return s
+}
+
+// SetReplayFunc wires in the webhook engine replay capability.
+// Called from cmd/namd/main.go after the webhook engine is created.
+func (s *Server) SetReplayFunc(fn func(relayName string) error) {
+	s.replayFunc = fn
 }
 
 func (s *Server) Start() {
@@ -166,9 +173,28 @@ func (s *Server) handleWebhookReplay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", 400)
 		return
 	}
-	// Replay logic lives in the webhook engine — dashboard just signals intent.
-	// For now: mark the event as replayed in stats.
-	log.Printf("[dashboard] replay requested for event %s", eventID)
+	relayName := r.URL.Query().Get("relay")
+	if relayName == "" {
+		// Try to find relay from event ID in stats.
+		snap := s.stats.Snapshot()
+		for _, wh := range snap.Webhooks {
+			if wh.ID == eventID {
+				relayName = wh.RelayName
+				break
+			}
+		}
+	}
+
+	if s.replayFunc != nil && relayName != "" {
+		if err := s.replayFunc(relayName); err != nil {
+			log.Printf("[dashboard] replay error: %v", err)
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		log.Printf("[dashboard] replayed events for relay %q", relayName)
+	} else {
+		log.Printf("[dashboard] replay requested for event %s (relay=%s)", eventID, relayName)
+	}
 	w.WriteHeader(200)
 	fmt.Fprintf(w, `{"replayed":true,"id":%q}`, eventID)
 }
@@ -314,10 +340,10 @@ function toggleJSON(id) {
 }
 
 // ── Replay webhook ─────────────────────────────────────────────────────────
-function replayWebhook(id) {
-  fetch('/api/webhook/replay?id=' + id, {method:'POST'})
+function replayWebhook(id, relay) {
+  fetch('/api/webhook/replay?id=' + id + (relay ? '&relay=' + relay : ''), {method:'POST'})
     .then(r => r.json())
-    .then(() => { alert('Replayed event ' + id) })
+    .then(() => { alert('Replayed events for relay: ' + (relay || id)) })
     .catch(e => alert('Replay failed: ' + e))
 }
 

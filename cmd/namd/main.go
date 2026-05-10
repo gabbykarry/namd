@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -153,8 +155,9 @@ func runStart(configPath string) error {
 	log.Printf("[namd] identity: @%s", cfg.Identity.Name)
 
 	stats := dashboard.NewStats()
+	var dash *dashboard.Server
 	if cfg.Dashboard.Enabled {
-		dash := dashboard.NewServer(cfg.Dashboard.Port, stats)
+		dash = dashboard.NewServer(cfg.Dashboard.Port, stats)
 		go dash.Start()
 	}
 
@@ -170,6 +173,10 @@ func runStart(configPath string) error {
 			log.Printf("[namd] webhook engine warning: %v", err)
 		} else {
 			log.Printf("[namd] webhook relay: %d relay(s) configured", len(cfg.Webhooks.Relay))
+			// Wire replay capability into the dashboard.
+			if dash != nil {
+				dash.SetReplayFunc(webhookEngine.Replay)
+			}
 		}
 	}
 
@@ -357,11 +364,45 @@ func handleStream(
 	if webhookEngine != nil {
 		if relay, matched := webhookEngine.Match(path); matched {
 			log.Printf("[namd] webhook: %s %s -> relay %q", method, path, relay.Name)
+
+			// Capture the raw body before the engine reads it.
+			// The engine calls io.ReadAll on req.Body internally.
+			// We read it here first and restore it so the engine still gets it.
+			var rawBody []byte
+			if req.Body != nil {
+				rawBody, _ = io.ReadAll(req.Body)
+				// Restore body for the engine — it needs to read it too.
+				req.Body = io.NopCloser(bytes.NewReader(rawBody))
+			}
+
 			w := newStreamResponseWriter(stream)
 			webhookEngine.Handle(w, req, relay)
+			duration := time.Since(start)
+
+			// Pretty-print the JSON payload for the dashboard inspector.
+			rawJSON := ""
+			if len(rawBody) > 0 {
+				var pretty bytes.Buffer
+				if err := json.Indent(&pretty, rawBody, "", "  "); err == nil {
+					rawJSON = pretty.String()
+				} else {
+					rawJSON = string(rawBody)
+				}
+			}
+
+			// Record as webhook event — shows in dashboard Webhooks tab.
+			stats.RecordWebhook(dashboard.WebhookEvent{
+				ID:         fmt.Sprintf("%x", start.UnixNano()),
+				RelayName:  relay.Name,
+				Provider:   relay.Adapter,
+				EventType:  path,
+				ReceivedAt: start,
+				StatusCode: w.statusCode,
+				RawJSON:    rawJSON,
+			})
 			stats.RecordRequest(dashboard.RequestLog{
 				Method: method, Path: path, StatusCode: w.statusCode,
-				Duration: time.Since(start), Timestamp: start, TunnelName: tunnelName,
+				Duration: duration, Timestamp: start, TunnelName: tunnelName,
 			})
 			return
 		}

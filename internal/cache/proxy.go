@@ -91,17 +91,35 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	p.forward(w, r)
 }
 
-// shouldCache returns true if this URL matches one of our configured targets.
-// We match by checking if the request URL starts with any target base URL.
+// shouldCache returns true if the request URL matches a configured target.
+// We match by HOST only — ignoring scheme (http vs https).
+// This means "https://api.paystack.co" in namd.yml matches both:
 //
-// Example:
-//
-//	target: "https://api.paystack.co"
-//	request: "https://api.paystack.co/transaction/verify/abc123"
-//	→ matches ✓
+//	http://api.paystack.co/...
+//	https://api.paystack.co/...
 func (p *Proxy) shouldCache(requestURL string) bool {
+	reqParsed, err := url.Parse(requestURL)
+	if err != nil {
+		return false
+	}
+	reqHost := reqParsed.Host
+	if h, _, ok := strings.Cut(reqHost, ":"); ok {
+		reqHost = h
+	}
+
 	for _, target := range p.targets {
-		if strings.HasPrefix(requestURL, target) {
+		targetParsed, err := url.Parse(target)
+		if err != nil {
+			if strings.HasPrefix(requestURL, target) {
+				return true
+			}
+			continue
+		}
+		targetHost := targetParsed.Host
+		if h, _, ok := strings.Cut(targetHost, ":"); ok {
+			targetHost = h
+		}
+		if reqHost == targetHost {
 			return true
 		}
 	}

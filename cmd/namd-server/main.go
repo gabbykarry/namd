@@ -12,22 +12,38 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
+	"github.com/gabbykarry/namd/internal/auth"
+	"github.com/gabbykarry/namd/internal/firewall"
 	"github.com/gabbykarry/namd/internal/transport"
 	"github.com/gabbykarry/namd/internal/tunnel"
+	"github.com/gabbykarry/namd/pkg/logger"
 )
 
 func main() {
 	registry := tunnel.NewRegistry()
 	broker := newHandoffBroker()
+	accounts := auth.NewAccountStore()
+	fw := firewall.NewEngine(nil) // rules loaded from namd.yml in production
+	slog := logger.New("server")
 
-	go listenForClients(registry)
+	slog.Info("starting", logger.Fields{
+		"tunnel_port":   9000,
+		"public_port":   8080,
+		"broker_port":   9001,
+		"registry_port": 9002,
+	})
+
+	go listenForClients(registry, accounts)
 	go listenHandoffBroker(broker)
-	listenForPublicTraffic(registry)
+	go listenRegistry(accounts)
+	listenForPublicTraffic(registry, fw)
 }
 
 // ── :9000 — tunnel client listener ───────────────────────────────────────────
 
-func listenForClients(registry *tunnel.Registry) {
+func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore) {
 	ln, err := net.Listen("tcp", ":9000")
 	if err != nil {
 		log.Fatalf("[server] cannot listen :9000: %v", err)
@@ -41,12 +57,15 @@ func listenForClients(registry *tunnel.Registry) {
 			log.Printf("[server] accept error: %v", err)
 			return
 		}
-		go handleClient(conn, registry)
+		go handleClient(conn, registry, accounts)
 	}
 }
 
-func handleClient(conn net.Conn, registry *tunnel.Registry) {
+func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.AccountStore) {
 	defer conn.Close()
+
+	clientIP := conn.RemoteAddr().String()
+	slog := logger.New("server")
 
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
@@ -56,13 +75,35 @@ func handleClient(conn net.Conn, registry *tunnel.Registry) {
 	}
 
 	message := strings.TrimSpace(line)
+
+	// New protocol: "HELLO <name> <token>"
+	// Old protocol: "HELLO <name>" — rejected for public server
 	if !strings.HasPrefix(message, "HELLO ") {
-		log.Printf("[server] invalid handshake: %q", message)
+		log.Printf("[server] invalid handshake from %s: %q", clientIP, message)
 		return
 	}
 
-	name := strings.TrimPrefix(message, "HELLO ")
-	if name == "" {
+	parts := strings.Fields(message)
+	// parts[0] = "HELLO"
+	// parts[1] = name
+	// parts[2] = token (required)
+	if len(parts) < 3 {
+		fmt.Fprintf(conn, "ERROR authentication required — run: namd auth register\n")
+		slog.Audit("auth_missing", logger.Fields{"ip": clientIP})
+		return
+	}
+
+	name := parts[1]
+	token := parts[2]
+
+	if name == "" || token == "" {
+		fmt.Fprintf(conn, "ERROR name and token are required\n")
+		return
+	}
+
+	// Verify the token against the account store.
+	if err := accounts.Verify(name, token, clientIP); err != nil {
+		fmt.Fprintf(conn, "ERROR %s\n", err.Error())
 		return
 	}
 
@@ -103,7 +144,7 @@ func handleClient(conn net.Conn, registry *tunnel.Registry) {
 
 // ── :8080 — public HTTP listener ──────────────────────────────────────────────
 
-func listenForPublicTraffic(registry *tunnel.Registry) {
+func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine) {
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatalf("[server] cannot listen :8080: %v", err)
@@ -117,11 +158,11 @@ func listenForPublicTraffic(registry *tunnel.Registry) {
 			log.Printf("[server] accept error: %v", err)
 			return
 		}
-		go handlePublicConn(conn, registry)
+		go handlePublicConn(conn, registry, fw)
 	}
 }
 
-func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry) {
+func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewall.Engine) {
 	defer publicConn.Close()
 
 	pubReader := bufio.NewReader(publicConn)
@@ -142,6 +183,14 @@ func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry) {
 	}
 	if name == "" {
 		writeHTTPError(publicConn, 400, "Missing or invalid Host header")
+		return
+	}
+
+	// ── Firewall check ────────────────────────────────────────────────────────
+	// Check IP allow/deny rules and rate limits BEFORE touching the tunnel.
+	// If blocked: return HTTP error to the client, do not waste tunnel resources.
+	if err := fw.Check(name, publicConn.RemoteAddr().String()); err != nil {
+		writeHTTPError(publicConn, 403, err.Error())
 		return
 	}
 
@@ -374,4 +423,87 @@ func brokerHandoff(senderConn net.Conn, broker *handoffBroker, from, to, subdoma
 		fmt.Fprintf(senderConn, "ERROR receiver did not respond in 5 minutes\n")
 		log.Printf("[broker] handoff timed out waiting for @%s", to)
 	}
+}
+
+// ── :9002 — registration and peer lookup ─────────────────────────────────────
+
+// listenRegistry handles two things on :9002:
+//  1. New account registration: client sends RegisterRequest JSON
+//  2. Peer lookup: handoff sender asks if a peer exists and is online
+func listenRegistry(accounts *auth.AccountStore) {
+	ln, err := net.Listen("tcp", ":9002")
+	if err != nil {
+		log.Fatalf("[registry] cannot listen :9002: %v", err)
+	}
+	defer ln.Close()
+	log.Println("[registry] registration/lookup on :9002")
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Printf("[registry] accept error: %v", err)
+			return
+		}
+		go handleRegistryConn(conn, accounts)
+	}
+}
+
+func handleRegistryConn(conn net.Conn, accounts *auth.AccountStore) {
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	line = strings.TrimSpace(line)
+
+	// Peer lookup request from handoff sender.
+	// "PEER_LOOKUP tunde"
+	if strings.HasPrefix(line, "PEER_LOOKUP ") {
+		name := strings.TrimPrefix(line, "PEER_LOOKUP ")
+		// For now: account exists = found. Online check via tunnel registry
+		// would require passing the tunnel registry here too — Phase 13 addition.
+		// Simple response for now: PEER_FOUND <name> online/offline
+		fmt.Fprintf(conn, "PEER_FOUND %s online\n", name)
+		return
+	}
+
+	// Registration request — JSON body.
+	// {"name":"gabriel","email":"...","token":"..."}
+	var req auth.RegisterRequest
+	if err := parseJSON(line, &req); err != nil {
+		resp := auth.RegisterResponse{Success: false, Message: "invalid request format"}
+		writeJSON(conn, resp)
+		return
+	}
+
+	if req.Name == "" || req.Token == "" {
+		resp := auth.RegisterResponse{Success: false, Message: "name and token are required"}
+		writeJSON(conn, resp)
+		return
+	}
+
+	if err := accounts.Register(req.Name, req.Email, req.Token); err != nil {
+		resp := auth.RegisterResponse{Success: false, Message: err.Error()}
+		writeJSON(conn, resp)
+		return
+	}
+
+	log.Printf("[registry] registered @%s", req.Name)
+	resp := auth.RegisterResponse{Success: true, Name: req.Name, Message: "registered successfully"}
+	writeJSON(conn, resp)
+}
+
+func parseJSON(line string, v interface{}) error {
+	return json.Unmarshal([]byte(line), v)
+}
+
+func writeJSON(conn net.Conn, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		fmt.Fprintf(conn, `{"success":false,"message":"internal error"}`)
+		return
+	}
+	fmt.Fprintf(conn, "%s\n", string(data))
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gabbykarry/namd/internal/auth"
 	"github.com/gabbykarry/namd/internal/cache"
 	"github.com/gabbykarry/namd/internal/config"
 	"github.com/gabbykarry/namd/internal/dashboard"
@@ -61,7 +62,48 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(startCmd, webhookCmd, versionCmd)
+	// namd auth register / namd auth status
+	authCmd := &cobra.Command{Use: "auth", Short: "Manage your namd identity"}
+
+	var (
+		authName   string
+		authEmail  string
+		authServer string
+	)
+
+	registerCmd := &cobra.Command{
+		Use:   "register",
+		Short: "Register a new account on the namd server",
+		Long: `Create your namd identity.
+Run this once before namd start.
+
+Example:
+  namd auth register --name gabriel --email gabriel@example.com`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAuthRegister(authName, authEmail, authServer)
+		},
+	}
+	registerCmd.Flags().StringVar(&authName, "name", "", "your handle e.g. gabriel")
+	registerCmd.Flags().StringVar(&authEmail, "email", "", "your email (for recovery)")
+	registerCmd.Flags().StringVar(&authServer, "server", "localhost:9000", "namd server address")
+	registerCmd.MarkFlagRequired("name")
+
+	statusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show current registration status",
+		Run: func(cmd *cobra.Command, args []string) {
+			creds, err := auth.LoadCredentials()
+			if err != nil {
+				fmt.Println("Not registered. Run: namd auth register --name yourname")
+				return
+			}
+			fmt.Printf("Registered as @%s on %s\n", creds.Name, creds.ServerURL)
+			fmt.Printf("Token issued: %s\n", creds.IssuedAt.Format("2006-01-02"))
+		},
+	}
+
+	authCmd.AddCommand(registerCmd, statusCmd)
+	rootCmd.AddCommand(startCmd, webhookCmd, versionCmd, authCmd)
 
 	// namd handoff @tunde
 	var handoffConfig string
@@ -144,15 +186,25 @@ func runStart(configPath string) error {
 		log.Printf("[namd] cache proxy: %d target(s) cached for %s", len(cfg.Cache.Targets), ttl)
 	}
 
+	// ── Load credentials ────────────────────────────────────────────────────
+	// Every connection to the server requires a valid token.
+	// If not registered yet: namd auth register --name gabriel
+	creds, err := auth.LoadAndVerifyCredentials()
+	if err != nil {
+		return fmt.Errorf("%w\n\nRun: namd auth register --name %s --server %s",
+			err, cfg.Identity.Name, resolveServerAddr(cfg))
+	}
+
 	serverAddr := resolveServerAddr(cfg)
-	log.Printf("[namd] connecting to %s", serverAddr)
+	log.Printf("[namd] connecting to %s as @%s", serverAddr, creds.Name)
 
 	conn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
 		return fmt.Errorf("cannot connect to %s: %w", serverAddr, err)
 	}
 
-	fmt.Fprintf(conn, "HELLO %s\n", cfg.Identity.Name)
+	// Send HELLO with token — server verifies before registering tunnel.
+	fmt.Fprintf(conn, "HELLO %s %s\n", creds.Name, creds.Token)
 
 	session, err := transport.WrapClientSide(cfg.Identity.Name, conn)
 	if err != nil {
@@ -502,5 +554,31 @@ func runAccept(configPath string) error {
 
 	log.Printf("[handoff] waiting for handoff requests as @%s", cfg.Identity.Name)
 	receiver.Listen() // blocks forever
+	return nil
+}
+
+// ── Auth runner ───────────────────────────────────────────────────────────────
+
+func runAuthRegister(name, email, serverAddr string) error {
+	// Check if already registered.
+	existing, err := auth.LoadCredentials()
+	if err == nil {
+		fmt.Printf("Already registered as @%s on %s\n", existing.Name, existing.ServerURL)
+		fmt.Printf("To re-register, delete ~/.namd/credentials first.\n")
+		return nil
+	}
+
+	fmt.Printf("Registering @%s on %s...\n", name, serverAddr)
+
+	creds, err := auth.Register(serverAddr, name, email)
+	if err != nil {
+		return fmt.Errorf("registration failed: %w", err)
+	}
+
+	fmt.Printf("\n✓ Registered successfully!\n")
+	fmt.Printf("  Handle:  @%s\n", creds.Name)
+	fmt.Printf("  Server:  %s\n", creds.ServerURL)
+	fmt.Printf("  Stored:  ~/.namd/credentials\n")
+	fmt.Printf("\nYou can now run: namd start\n")
 	return nil
 }

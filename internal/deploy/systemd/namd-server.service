@@ -1,0 +1,29 @@
+[Unit]
+Description=namd tunnel server
+Documentation=https://github.com/gabbykarry/namd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/namd-server
+Restart=always
+RestartSec=5s
+
+# Environment variables
+# Set NAMD_SECRET to a long random string
+# Generate one: openssl rand -hex 32
+Environment=NAMD_SECRET=change-this-to-a-long-random-secret
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=namd-server
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

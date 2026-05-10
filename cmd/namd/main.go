@@ -14,6 +14,7 @@ import (
 	"github.com/gabbykarry/namd/internal/cache"
 	"github.com/gabbykarry/namd/internal/config"
 	"github.com/gabbykarry/namd/internal/dashboard"
+	"github.com/gabbykarry/namd/internal/handoff"
 	"github.com/gabbykarry/namd/internal/loadbalancer"
 	"github.com/gabbykarry/namd/internal/transport"
 	"github.com/gabbykarry/namd/internal/webhook"
@@ -61,6 +62,39 @@ func main() {
 	}
 
 	rootCmd.AddCommand(startCmd, webhookCmd, versionCmd)
+
+	// namd handoff @tunde
+	var handoffConfig string
+	handoffCmd := &cobra.Command{
+		Use:   "handoff [@peer]",
+		Short: "Hand off your tunnel to a trusted peer",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runHandoff(handoffConfig, args[0])
+		},
+	}
+	handoffCmd.Flags().StringVarP(&handoffConfig, "config", "c", "namd.yml", "config file")
+
+	cancelCmd := &cobra.Command{
+		Use:   "cancel",
+		Short: "Cancel an active handoff",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runHandoffCancel(handoffConfig)
+		},
+	}
+	handoffCmd.AddCommand(cancelCmd)
+
+	acceptCmd := &cobra.Command{
+		Use:   "accept",
+		Short: "Accept incoming handoff requests",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAccept(handoffConfig)
+		},
+	}
+	acceptCmd.Flags().StringVarP(&handoffConfig, "config", "c", "namd.yml", "config file")
+
+	rootCmd.AddCommand(handoffCmd, acceptCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -373,4 +407,100 @@ func (w *streamResponseWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(200)
 	}
 	return w.conn.Write(b)
+}
+
+// ── Handoff runner functions ──────────────────────────────────────────────────
+
+func runHandoff(configPath, peer string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("config error: %w", err)
+	}
+
+	// Strip @ prefix if provided.
+	peerName := strings.TrimPrefix(peer, "@")
+
+	// Validate peer is in trusted list.
+	trusted := false
+	for _, p := range cfg.Handoff.TrustedPeers {
+		if strings.TrimPrefix(p, "@") == peerName {
+			trusted = true
+			break
+		}
+	}
+	if !trusted {
+		return fmt.Errorf("@%s is not in your trusted_peers list in namd.yml", peerName)
+	}
+
+	maxDur, err := time.ParseDuration(cfg.Handoff.MaxDuration)
+	if err != nil {
+		maxDur = 60 * time.Minute
+	}
+
+	// Find the first tunnel subdomain.
+	subdomain := cfg.Identity.Name
+	for _, t := range cfg.Tunnels {
+		if t.Subdomain != "" {
+			subdomain = t.Subdomain
+		}
+		break
+	}
+
+	serverAddr := resolveServerAddr(cfg)
+	sender := handoff.NewSender(handoff.HandoffRequest{
+		From:        cfg.Identity.Name,
+		To:          peerName,
+		Subdomain:   subdomain,
+		MaxDuration: maxDur,
+		ServerAddr:  serverAddr,
+	}, os.Getenv("NAMD_SECRET"))
+
+	token, err := sender.Initiate()
+	if err != nil {
+		return err
+	}
+
+	// Block until token expires — then print summary.
+	remaining := token.TimeRemaining()
+	log.Printf("[handoff] waiting %s until handoff expires...", remaining.Round(time.Minute))
+	time.Sleep(remaining)
+	log.Printf("[handoff] handoff session ended")
+	return nil
+}
+
+func runHandoffCancel(configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("config error: %w", err)
+	}
+
+	subdomain := cfg.Identity.Name
+	serverAddr := resolveServerAddr(cfg)
+
+	return handoff.Cancel(serverAddr, cfg.Identity.Name, subdomain)
+}
+
+func runAccept(configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("config error: %w", err)
+	}
+
+	maxDur, err := time.ParseDuration(cfg.Handoff.MaxDuration)
+	if err != nil {
+		maxDur = 60 * time.Minute
+	}
+
+	serverAddr := resolveServerAddr(cfg)
+	receiver := handoff.NewReceiver(
+		cfg.Identity.Name,
+		serverAddr,
+		os.Getenv("NAMD_SECRET"),
+		cfg.Handoff.Sandbox,
+		maxDur,
+	)
+
+	log.Printf("[handoff] waiting for handoff requests as @%s", cfg.Identity.Name)
+	receiver.Listen() // blocks forever
+	return nil
 }

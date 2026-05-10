@@ -126,9 +126,9 @@ func main() {
 	}()
 	// If TLS is configured, also serve HTTPS on :443
 	if cfg.TLSEnabled {
-		go listenForPublicTrafficTLS(registry, fw, cfg)
+		go listenForPublicTrafficTLS(registry, fw, cfg, adminStore)
 	}
-	listenForPublicTraffic(registry, fw, cfg)
+	listenForPublicTraffic(registry, fw, cfg, adminStore)
 }
 
 // ── :9000 — tunnel client listener ───────────────────────────────────────────
@@ -278,7 +278,7 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 
 // ── :8080 — public HTTP listener ──────────────────────────────────────────────
 
-func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig) {
+func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig, adminStore *admin.ServerStore) {
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatalf("[server] cannot listen :8080: %v", err)
@@ -292,11 +292,11 @@ func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine, cfg 
 			log.Printf("[server] accept error: %v", err)
 			return
 		}
-		go handlePublicConn(conn, registry, fw, cfg)
+		go handlePublicConn(conn, registry, fw, cfg, adminStore)
 	}
 }
 
-func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig) {
+func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig, adminStore *admin.ServerStore) {
 	defer publicConn.Close()
 
 	pubReader := bufio.NewReader(publicConn)
@@ -315,8 +315,27 @@ func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewa
 	if !hasDot {
 		name = host
 	}
+
+	// Root domain (e.g. "namd.online" with no subdomain) serves the landing page
+	// as a static file from /var/www/namd/index.html on the VPS.
+	// This means the landing page is always available even when no tunnel is running.
+	if name == "" || host == cfg.Domain || (cfg.Domain != "" && host == cfg.Domain) {
+		serveLandingPage(publicConn, req)
+		return
+	}
+
 	if name == "" {
 		writeHTTPError(publicConn, 400, "Missing or invalid Host header")
+		return
+	}
+
+	// ── Health endpoint ─────────────────────────────────────────────────────
+	// /health returns server status. Used by landing page to detect if
+	// a specific tunnel is live without CORS issues.
+	if req.URL.Path == "/health" {
+		w := &healthWriter{conn: publicConn}
+		w.writeJSON(fmt.Sprintf(`{"server":"ok","tunnel":%q,"online":%v}`,
+			name, registry.Has(name)))
 		return
 	}
 
@@ -370,20 +389,32 @@ func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewa
 		return
 	}
 
-	var wg sync.WaitGroup
+	var (
+		wg       sync.WaitGroup
+		bytesOut int64
+		bytesIn  int64
+	)
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
 		n, err := io.Copy(publicConn, stream)
+		bytesOut = n
 		log.Printf("[server] stream->public %d bytes err=%v", n, err)
 	}()
 
 	n, err := io.Copy(stream, &reqBuf)
+	bytesIn = n
 	log.Printf("[server] public->stream %d bytes err=%v", n, err)
 
 	stream.Close()
 	wg.Wait()
+
+	// Record bandwidth and request count in admin store.
+	if adminStore != nil {
+		adminStore.IncrRequests(name)
+		adminStore.IncrBytes(name, bytesIn, bytesOut)
+	}
 }
 
 func writeHTTPError(conn net.Conn, status int, message string) {
@@ -661,7 +692,7 @@ func writeJSON(conn net.Conn, v interface{}) {
 // listenForPublicTrafficTLS serves HTTPS on :443.
 // Only started when NAMD_CERT and NAMD_KEY are configured.
 // Handles the same traffic as :8080 but encrypted.
-func listenForPublicTrafficTLS(registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig) {
+func listenForPublicTrafficTLS(registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig, adminStore *admin.ServerStore) {
 	ln, err := transport.ListenTLS(":443", cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		log.Fatalf("[server] cannot listen :443 (TLS): %v", err)
@@ -675,6 +706,45 @@ func listenForPublicTrafficTLS(registry *tunnel.Registry, fw *firewall.Engine, c
 			log.Printf("[server] accept error on :443: %v", err)
 			return
 		}
-		go handlePublicConn(conn, registry, fw, cfg)
+		go handlePublicConn(conn, registry, fw, cfg, adminStore)
 	}
+}
+
+// healthWriter writes a simple JSON health response directly to a net.Conn.
+type healthWriter struct{ conn net.Conn }
+
+func (h *healthWriter) writeJSON(body string) {
+	fmt.Fprintf(h.conn,
+		"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: %d\r\n\r\n%s",
+		len(body), body,
+	)
+}
+
+// serveLandingPage serves the static landing page from /var/www/namd/index.html.
+// Called when the root domain (namd.online) is requested with no subdomain.
+// The landing page lives on the VPS — not tunneled through any client.
+// This means it is always available even when no developer is connected.
+func serveLandingPage(conn net.Conn, req *http.Request) {
+	indexPath := "/var/www/namd/index.html"
+
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		// File not found — show a minimal placeholder.
+		body := `<!DOCTYPE html><html><head><title>namd</title></head><body style="font-family:sans-serif;max-width:600px;margin:80px auto;padding:20px;background:#090909;color:#f5f0e8">
+<h1 style="font-size:48px;font-weight:800;letter-spacing:-2px">na<span style="color:#00ff87">md</span></h1>
+<p style="color:#888;margin:16px 0">Open source tunnel for African developers.</p>
+<a href="https://github.com/gabbykarry/namd" style="color:#00ff87">GitHub →</a>
+</body></html>`
+		fmt.Fprintf(conn,
+			"HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s",
+			len(body), body,
+		)
+		return
+	}
+
+	fmt.Fprintf(conn,
+		"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\n\r\n",
+		len(data),
+	)
+	conn.Write(data)
 }

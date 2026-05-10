@@ -37,6 +37,8 @@ type AdminTunnel struct {
 	ClientIP    string
 	ConnectedAt time.Time
 	Requests    int64
+	BytesIn     int64 // bytes received from internet
+	BytesOut    int64 // bytes sent to internet
 	// Disconnect is called to force-close this tunnel.
 	Disconnect func()
 }
@@ -100,6 +102,17 @@ func (s *ServerStore) IncrRequests(tunnelName string) {
 	}
 }
 
+// IncrBytes adds bandwidth usage to a tunnel's counters.
+// Called from handlePublicConn after each request completes.
+func (s *ServerStore) IncrBytes(tunnelName string, in, out int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.tunnels[tunnelName]; ok {
+		t.BytesIn += in
+		t.BytesOut += out
+	}
+}
+
 // AddAuditEvent records a security event.
 // Called from the auth package's logger.
 func (s *ServerStore) AddAuditEvent(event, name, ip, reason string) {
@@ -148,6 +161,8 @@ func (s *ServerStore) ActiveTunnels() []TunnelInfo {
 			ClientIP:    t.ClientIP,
 			ConnectedAt: t.ConnectedAt,
 			Requests:    t.Requests,
+			BytesIn:     t.BytesIn,
+			BytesOut:    t.BytesOut,
 		})
 	}
 	return result

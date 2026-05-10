@@ -31,6 +31,8 @@ type TunnelInfo struct {
 	ClientIP    string    `json:"client_ip"`
 	ConnectedAt time.Time `json:"connected_at"`
 	Requests    int64     `json:"requests"`
+	BytesIn     int64     `json:"bytes_in"`
+	BytesOut    int64     `json:"bytes_out"`
 }
 
 // AuditEntry is one security event from the server logs.
@@ -181,6 +183,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				return fmt.Sprintf("%dm ago", int(d.Minutes()))
 			default:
 				return fmt.Sprintf("%dh ago", int(d.Hours()))
+			}
+		},
+		"bytes": func(b int64) string {
+			switch {
+			case b < 1024:
+				return fmt.Sprintf("%dB", b)
+			case b < 1024*1024:
+				return fmt.Sprintf("%.1fKB", float64(b)/1024)
+			case b < 1024*1024*1024:
+				return fmt.Sprintf("%.1fMB", float64(b)/1024/1024)
+			default:
+				return fmt.Sprintf("%.2fGB", float64(b)/1024/1024/1024)
 			}
 		},
 	}).Parse(adminHTML))
@@ -386,7 +400,7 @@ input[type=text]:focus{outline:none;border-color:#444}
     <div class="card-title">Active Tunnels</div>
     {{if .Tunnels}}
     <table>
-      <thead><tr><th>Name</th><th>Public URL</th><th>Client IP</th><th>Connected</th><th>Requests</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Public URL</th><th>Client IP</th><th>Connected</th><th>Requests</th><th>In</th><th>Out</th><th></th></tr></thead>
       <tbody>
         {{range .Tunnels}}
         <tr>
@@ -395,6 +409,8 @@ input[type=text]:focus{outline:none;border-color:#444}
           <td><span class="ip">{{.ClientIP}}</span></td>
           <td><span class="ts">{{.ConnectedAt | ago}}</span></td>
           <td><span class="ts">{{.Requests}}</span></td>
+          <td><span class="ts">{{.BytesIn | bytes}}</span></td>
+          <td><span class="ts">{{.BytesOut | bytes}}</span></td>
           <td><button class="btn yellow" onclick="confirmDisconnect('{{.Name}}')">disconnect</button></td>
         </tr>
         {{end}}

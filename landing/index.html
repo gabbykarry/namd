@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>namd — open source tunnel for African developers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --black: #090909;
+    --white: #f5f0e8;
+    --green: #00ff87;
+    --green-dim: #00cc6a;
+    --amber: #ffb800;
+    --red: #ff3b3b;
+    --gray: #888;
+    --border: rgba(245,240,232,0.08);
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--black);
+    color: var(--white);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ── GRAIN TEXTURE ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.4;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 48px;
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    background: rgba(9,9,9,0.7);
+  }
+
+  .nav-logo {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--white);
+    text-decoration: none;
+  }
+
+  .nav-logo span { color: var(--green); }
+
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    list-style: none;
+  }
+
+  .nav-links a {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--gray);
+    text-decoration: none;
+    letter-spacing: 0.02em;
+    transition: color 0.2s;
+  }
+
+  .nav-links a:hover { color: var(--white); }
+
+  .nav-cta {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--black) !important;
+    background: var(--green);
+    padding: 8px 18px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: opacity 0.2s !important;
+  }
+
+  .nav-cta:hover { opacity: 0.85; }
+
+  /* ── HERO ── */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 120px 24px 80px;
+    position: relative;
+  }
+
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    color: var(--green);
+    text-transform: uppercase;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .hero-eyebrow::before,
+  .hero-eyebrow::after {
+    content: '';
+    width: 32px;
+    height: 1px;
+    background: var(--green);
+    opacity: 0.5;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(52px, 8vw, 96px);
+    font-weight: 800;
+    line-height: 0.95;
+    letter-spacing: -3px;
+    margin-bottom: 32px;
+    color: var(--white);
+  }
+
+  h1 em {
+    font-style: normal;
+    color: var(--green);
+    position: relative;
+  }
+
+  .hero-sub {
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--gray);
+    max-width: 560px;
+    line-height: 1.7;
+    margin-bottom: 48px;
+  }
+
+  .hero-sub strong {
+    color: var(--white);
+    font-weight: 400;
+  }
+
+  .hero-actions {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 64px;
+  }
+
+  .btn-primary {
+    background: var(--green);
+    color: var(--black);
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: opacity 0.2s, transform 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+
+  .btn-secondary {
+    border: 1px solid var(--border);
+    color: var(--white);
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 400;
+    text-decoration: none;
+    transition: border-color 0.2s, background 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-secondary:hover { border-color: rgba(245,240,232,0.25); background: rgba(245,240,232,0.04); }
+
+  /* ── TERMINAL DEMO ── */
+  .terminal {
+    background: #0f0f0f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0;
+    width: 100%;
+    max-width: 640px;
+    text-align: left;
+    overflow: hidden;
+    box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+  }
+
+  .terminal-bar {
+    background: #1a1a1a;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dot-r { width: 10px; height: 10px; border-radius: 50%; background: #ff5f56; }
+  .dot-y { width: 10px; height: 10px; border-radius: 50%; background: #ffbd2e; }
+  .dot-g { width: 10px; height: 10px; border-radius: 50%; background: #27c93f; }
+
+  .terminal-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--gray);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .terminal-body {
+    padding: 24px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 2;
+  }
+
+  .t-prompt { color: var(--green); }
+  .t-cmd { color: var(--white); }
+  .t-comment { color: #444; }
+  .t-dim { color: #555; }
+  .t-url { color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
+  .t-label { color: var(--amber); }
+  .t-success { color: var(--green); }
+
+  /* ── GRID GLOW ── */
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: -100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 300px;
+    background: radial-gradient(ellipse, rgba(0,255,135,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ── COMPARISON SECTION ── */
+  .section {
+    padding: 100px 48px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--green);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-family: var(--font-display);
+    font-size: clamp(32px, 4vw, 52px);
+    font-weight: 700;
+    letter-spacing: -1.5px;
+    line-height: 1.05;
+    margin-bottom: 16px;
+  }
+
+  .section-sub {
+    font-size: 16px;
+    color: var(--gray);
+    max-width: 480px;
+    line-height: 1.7;
+    margin-bottom: 60px;
+  }
+
+  /* ── COMPARISON TABLE ── */
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  .compare-table th {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--gray);
+    padding: 12px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compare-table th:nth-child(2) { color: var(--green); }
+
+  .compare-table td {
+    padding: 14px 20px;
+    border-bottom: 1px solid rgba(245,240,232,0.04);
+    color: rgba(245,240,232,0.7);
+    vertical-align: middle;
+  }
+
+  .compare-table td:first-child { color: var(--white); font-weight: 400; }
+  .compare-table td:nth-child(2) { color: var(--green); font-weight: 500; }
+
+  .compare-table tr:hover td { background: rgba(245,240,232,0.02); }
+
+  .check { color: var(--green); font-size: 16px; }
+  .cross { color: #444; font-size: 16px; }
+  .partial { color: var(--amber); font-size: 13px; }
+
+  /* ── FEATURES GRID ── */
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .feature-card {
+    background: var(--black);
+    padding: 32px;
+    transition: background 0.2s;
+  }
+
+  .feature-card:hover { background: #0f0f0f; }
+
+  .feature-icon {
+    font-size: 24px;
+    margin-bottom: 16px;
+    display: block;
+  }
+
+  .feature-title {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    margin-bottom: 10px;
+    color: var(--white);
+  }
+
+  .feature-desc {
+    font-size: 14px;
+    color: var(--gray);
+    line-height: 1.65;
+  }
+
+  .feature-tag {
+    display: inline-block;
+    margin-top: 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--green);
+    background: rgba(0,255,135,0.08);
+    border: 1px solid rgba(0,255,135,0.15);
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+
+  /* ── INSTALL ── */
+  .install-block {
+    background: #0f0f0f;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .install-block code { color: var(--white); }
+
+  .copy-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--gray);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .copy-btn:hover { border-color: var(--green); color: var(--green); }
+  .copy-btn.copied { border-color: var(--green); color: var(--green); }
+
+  /* ── DIVIDER ── */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    padding: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+
+  .footer-logo {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+
+  .footer-logo span { color: var(--green); }
+
+  .footer-links {
+    display: flex;
+    gap: 28px;
+    list-style: none;
+  }
+
+  .footer-links a {
+    font-size: 13px;
+    color: var(--gray);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+
+  .footer-links a:hover { color: var(--white); }
+
+  .footer-made {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: #444;
+  }
+
+  .footer-made span { color: var(--green); }
+
+  /* ── LIVE BADGE ── */
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0,255,135,0.08);
+    border: 1px solid rgba(0,255,135,0.2);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--green);
+    letter-spacing: 0.05em;
+    margin-bottom: 32px;
+  }
+
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0,255,135,0.4); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(0,255,135,0); }
+  }
+
+  /* ── OFFLINE PAGE ── */
+  #offline-page {
+    display: none;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 48px 24px;
+    flex-direction: column;
+  }
+
+  .offline-emoji {
+    font-size: 72px;
+    margin-bottom: 32px;
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-12px); }
+  }
+
+  .offline-title {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 6vw, 64px);
+    font-weight: 800;
+    letter-spacing: -2px;
+    line-height: 1;
+    margin-bottom: 24px;
+  }
+
+  .offline-title span { color: var(--amber); }
+
+  .offline-msg {
+    font-size: 18px;
+    color: var(--gray);
+    max-width: 480px;
+    line-height: 1.7;
+    margin-bottom: 16px;
+  }
+
+  .offline-sub {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: #444;
+    margin-bottom: 48px;
+  }
+
+  .offline-sub a {
+    color: var(--green);
+    text-decoration: none;
+  }
+
+  .offline-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .offline-stat {
+    margin-top: 64px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: #333;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* ── MAIN PAGE ── */
+  #main-page { display: none; }
+
+  /* ── DOCS SECTION ── */
+  .docs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .doc-card {
+    background: var(--black);
+    padding: 28px 32px;
+    text-decoration: none;
+    transition: background 0.2s;
+    display: block;
+  }
+
+  .doc-card:hover { background: #0f0f0f; }
+
+  .doc-card-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 10px;
+  }
+
+  .doc-card-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--white);
+    margin-bottom: 8px;
+  }
+
+  .doc-card-desc {
+    font-size: 13px;
+    color: var(--gray);
+    line-height: 1.6;
+  }
+
+  .doc-card-arrow {
+    margin-top: 16px;
+    font-size: 18px;
+    color: var(--green);
+    display: inline-block;
+    transition: transform 0.2s;
+  }
+
+  .doc-card:hover .doc-card-arrow { transform: translateX(4px); }
+
+  @media (max-width: 768px) {
+    nav { padding: 16px 20px; }
+    .nav-links { display: none; }
+    .section { padding: 64px 20px; }
+    .docs-grid { grid-template-columns: 1fr; }
+    footer { padding: 32px 20px; flex-direction: column; align-items: flex-start; }
+    .compare-table { font-size: 12px; }
+    .compare-table th, .compare-table td { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── OFFLINE PAGE ── -->
+<div id="offline-page">
+  <div class="offline-emoji">😴</div>
+  <h1 class="offline-title">Gabriel's laptop<br>is <span>offline</span></h1>
+  <p class="offline-msg">
+    The server running this website is literally Gabriel's MacBook.
+    He probably closed the lid. Or the battery died. Or he is eating jollof rice.
+  </p>
+  <p class="offline-sub">
+    Come back in a bit — or call him.<br>
+    In the meantime, the code is on <a href="https://github.com/gabbykarry/namd" target="_blank">GitHub</a>.
+  </p>
+  <div class="offline-actions">
+    <a href="https://github.com/gabbykarry/namd" target="_blank" class="btn-primary">
+      View on GitHub →
+    </a>
+    <button onclick="location.reload()" class="btn-secondary">
+      Try again
+    </button>
+  </div>
+  <p class="offline-stat">namd.online · running on a MacBook in Lagos</p>
+</div>
+
+<!-- ── MAIN PAGE ── -->
+<div id="main-page">
+
+  <!-- NAV -->
+  <nav>
+    <a href="/" class="nav-logo">na<span>md</span></a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#docs">Docs</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="https://github.com/gabbykarry/namd" target="_blank">GitHub</a></li>
+      <li><a href="https://github.com/gabbykarry/namd" target="_blank" class="nav-cta">Get started →</a></li>
+    </ul>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      server live · namd.online
+    </div>
+
+    <div class="hero-eyebrow">open source · built in nigeria</div>
+
+    <h1>Your localhost.<br><em>The internet.</em><br>One command.</h1>
+
+    <p class="hero-sub">
+      Test <strong>Paystack</strong> and <strong>Flutterwave</strong> webhooks locally.
+      Share work with clients. Keep coding when your internet drops.
+      No credit card. No bandwidth limits. No interstitial pages.
+    </p>
+
+    <div class="hero-actions">
+      <a href="#install" class="btn-primary">Install namd →</a>
+      <a href="https://github.com/gabbykarry/namd" target="_blank" class="btn-secondary">
+        View on GitHub
+      </a>
+    </div>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot-r"></div>
+        <div class="dot-y"></div>
+        <div class="dot-g"></div>
+        <span class="terminal-title">namd — zsh</span>
+      </div>
+      <div class="terminal-body">
+        <div><span class="t-comment"># one time setup</span></div>
+        <div>
+          <span class="t-prompt">$</span>
+          <span class="t-cmd"> namd auth register --name yourname</span>
+        </div>
+        <div class="t-dim">✓ Registered as @yourname on namd.online</div>
+        <br>
+        <div><span class="t-comment"># start your tunnel</span></div>
+        <div>
+          <span class="t-prompt">$</span>
+          <span class="t-cmd"> namd start</span>
+        </div>
+        <div><span class="t-label">[namd]</span> <span class="t-dim">tunnel active  →</span> <span class="t-url">https://yourname.namd.online</span></div>
+        <div><span class="t-label">[namd]</span> <span class="t-dim">dashboard      → http://localhost:5555</span></div>
+        <div><span class="t-label">[namd]</span> <span class="t-dim">forwarding to  → http://localhost:3000</span></div>
+        <br>
+        <div><span class="t-comment"># webhook received from Paystack</span></div>
+        <div><span class="t-label">[webhook]</span> <span class="t-success">payments event received: charge.success id=a3f2c891</span></div>
+        <div><span class="t-label">[webhook]</span> <span class="t-dim">forwarded → local app returned 200</span></div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- VS NGROK -->
+  <section class="section">
+    <div class="section-label">Why namd</div>
+    <h2 class="section-title">ngrok just got worse.<br>We got better.</h2>
+    <p class="section-sub">ngrok cut its free tier to 1GB/month, 2-hour sessions, random URLs, and added an interstitial warning page that breaks your client demos.</p>
+
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>namd</th>
+          <th>ngrok free</th>
+          <th>Cloudflare Tunnel</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Bandwidth limit</td>
+          <td>✓ None</td>
+          <td><span class="cross">1GB/month</span></td>
+          <td>✓ None</td>
+        </tr>
+        <tr>
+          <td>Session timeout</td>
+          <td>✓ Never</td>
+          <td><span class="cross">2 hours</span></td>
+          <td>✓ Never</td>
+        </tr>
+        <tr>
+          <td>Custom subdomain</td>
+          <td>✓ Always free</td>
+          <td><span class="cross">Paid only</span></td>
+          <td><span class="partial">Via config</span></td>
+        </tr>
+        <tr>
+          <td>Interstitial warning page</td>
+          <td>✓ Never</td>
+          <td><span class="cross">Always on free</span></td>
+          <td>✓ None</td>
+        </tr>
+        <tr>
+          <td>Paystack webhook adapter</td>
+          <td>✓ Built-in</td>
+          <td><span class="cross">None</span></td>
+          <td><span class="cross">None</span></td>
+        </tr>
+        <tr>
+          <td>Flutterwave webhook adapter</td>
+          <td>✓ Built-in</td>
+          <td><span class="cross">None</span></td>
+          <td><span class="cross">None</span></td>
+        </tr>
+        <tr>
+          <td>Webhook replay</td>
+          <td>✓ Built-in</td>
+          <td><span class="partial">Paid only</span></td>
+          <td><span class="cross">None</span></td>
+        </tr>
+        <tr>
+          <td>Offline cache</td>
+          <td>✓ Built-in</td>
+          <td><span class="cross">None</span></td>
+          <td><span class="cross">None</span></td>
+        </tr>
+        <tr>
+          <td>Live handoff</td>
+          <td>✓ Built-in</td>
+          <td><span class="cross">None</span></td>
+          <td><span class="cross">None</span></td>
+        </tr>
+        <tr>
+          <td>Self-hostable</td>
+          <td>✓ Always</td>
+          <td><span class="cross">No</span></td>
+          <td>✓ Yes</td>
+        </tr>
+        <tr>
+          <td>Open source</td>
+          <td>✓ MIT</td>
+          <td><span class="cross">No</span></td>
+          <td><span class="partial">Partially</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <hr class="divider">
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="section-label">What's inside</div>
+    <h2 class="section-title">Built for the way<br>you actually work.</h2>
+    <p class="section-sub">Not a stripped-down free tier. Everything ships on day one.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <span class="feature-icon">⚡</span>
+        <div class="feature-title">Reverse tunnel</div>
+        <p class="feature-desc">Expose localhost to the internet instantly. HTTPS, real domain, no configuration. Works behind any NAT or corporate firewall.</p>
+        <span class="feature-tag">core</span>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🪝</span>
+        <div class="feature-title">Webhook relay</div>
+        <p class="feature-desc">Built-in adapters for Paystack, Flutterwave, and GitHub. Signature verification, event storage, one-click replay of missed events.</p>
+        <span class="feature-tag">african payments</span>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📊</span>
+        <div class="feature-title">Live dashboard</div>
+        <p class="feature-desc">Real-time request log, webhook inspector with raw payload view, handoff panel. No page refresh — updates as traffic flows.</p>
+        <span class="feature-tag">localhost:5555</span>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🔄</span>
+        <div class="feature-title">Load balancer</div>
+        <p class="feature-desc">Round robin, least connections, or random across multiple local backends. Health checks automatically remove dead targets.</p>
+        <span class="feature-tag">built-in</span>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📡</span>
+        <div class="feature-title">Offline cache</div>
+        <p class="feature-desc">When your internet drops, namd serves cached API responses. Keep coding. Set HTTP_PROXY=localhost:7777 in your app.</p>
+        <span class="feature-tag">for bad connections</span>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🔋</span>
+        <div class="feature-title">Live handoff</div>
+        <p class="feature-desc">Battery dying mid-demo? Transfer your tunnel to a trusted peer's machine. Same URL. Zero downtime. They accept, you close your laptop.</p>
+        <span class="feature-tag">our invention</span>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- INSTALL -->
+  <section class="section" id="install">
+    <div class="section-label">Get started</div>
+    <h2 class="section-title">Three steps.</h2>
+    <p class="section-sub">No account on a foreign startup's platform. Just install, register once, run.</p>
+
+    <div class="install-block">
+      <code>go install github.com/gabbykarry/namd/cmd/namd@latest</code>
+      <button class="copy-btn" onclick="copy(this, 'go install github.com/gabbykarry/namd/cmd/namd@latest')">copy</button>
+    </div>
+
+    <div class="install-block">
+      <code>namd auth register --name yourname --email you@example.com</code>
+      <button class="copy-btn" onclick="copy(this, 'namd auth register --name yourname --email you@example.com')">copy</button>
+    </div>
+
+    <div class="install-block">
+      <code>namd start</code>
+      <button class="copy-btn" onclick="copy(this, 'namd start')">copy</button>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- DOCS -->
+  <section class="section" id="docs">
+    <div class="section-label">Documentation</div>
+    <h2 class="section-title">Everything you need.</h2>
+    <p class="section-sub">Guides, references, and examples for every feature.</p>
+
+    <div class="docs-grid">
+      <a href="https://github.com/gabbykarry/namd#quick-start" target="_blank" class="doc-card">
+        <div class="doc-card-label">Guide</div>
+        <div class="doc-card-title">Quick start</div>
+        <p class="doc-card-desc">Install namd, register your identity, and get your first tunnel running in under 2 minutes.</p>
+        <span class="doc-card-arrow">→</span>
+      </a>
+      <a href="https://github.com/gabbykarry/namd#webhook-testing" target="_blank" class="doc-card">
+        <div class="doc-card-label">Guide</div>
+        <div class="doc-card-title">Webhook testing</div>
+        <p class="doc-card-desc">Configure Paystack, Flutterwave, or GitHub webhook adapters. Inspect payloads and replay missed events.</p>
+        <span class="doc-card-arrow">→</span>
+      </a>
+      <a href="https://github.com/gabbykarry/namd#namdyml-reference" target="_blank" class="doc-card">
+        <div class="doc-card-label">Reference</div>
+        <div class="doc-card-title">namd.yml config</div>
+        <p class="doc-card-desc">Complete reference for every configuration option — tunnels, load balancer, cache, firewall, handoff.</p>
+        <span class="doc-card-arrow">→</span>
+      </a>
+      <a href="https://github.com/gabbykarry/namd/blob/main/docs/contributing.md" target="_blank" class="doc-card">
+        <div class="doc-card-label">Contributing</div>
+        <div class="doc-card-title">Add a webhook adapter</div>
+        <p class="doc-card-desc">One file. Add support for Monnify, Interswitch, Kora, or any other provider. We review PRs fast.</p>
+        <span class="doc-card-arrow">→</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-logo">na<span>md</span></div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/gabbykarry/namd" target="_blank">GitHub</a></li>
+      <li><a href="https://github.com/gabbykarry/namd#namdyml-reference" target="_blank">Docs</a></li>
+      <li><a href="https://github.com/gabbykarry/namd/blob/main/docs/contributing.md" target="_blank">Contributing</a></li>
+      <li><a href="https://github.com/gabbykarry/namd/blob/main/LICENSE" target="_blank">MIT License</a></li>
+    </ul>
+    <div class="footer-made">built by <span>@gabbykarry</span> · Lagos, Nigeria 🇳🇬</div>
+  </footer>
+
+</div><!-- end main-page -->
+
+<script>
+// ── ONLINE/OFFLINE DETECTION ─────────────────────────────────────────────────
+// We ping the tunnel health endpoint.
+// If it responds — laptop is up, show the landing page.
+// If it fails — laptop is offline or tunnel not running, show offline page.
+
+async function checkOnline() {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    // /health is served by namd-server directly — no tunnel needed.
+    // Returns: {"server":"ok","tunnel":"gabriel","online":true/false}
+    // CORS header included so this works cross-origin from namd.online.
+    // "online":false means VPS is up but gabriel's tunnel is not connected.
+    const res = await fetch('https://gabriel.namd.online/health', {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    const data = await res.json();
+    if (data.online) {
+      showMain();
+    } else {
+      showOffline();
+    }
+  } catch (e) {
+    showOffline();
+  }
+}
+
+function showMain() {
+  document.getElementById('main-page').style.display = 'block';
+}
+
+function showOffline() {
+  document.getElementById('offline-page').style.display = 'flex';
+}
+
+// ── COPY BUTTON ───────────────────────────────────────────────────────────────
+function copy(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'copy';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+// Run on load
+checkOnline();
+</script>
+</body>
+</html>

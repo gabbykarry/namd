@@ -134,3 +134,11 @@ func (r *Registry) List() []string {
 	}
 	return names
 }
+
+// Has returns true if a tunnel with the given name is currently registered.
+func (r *Registry) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.sessions[name]
+	return ok
+}

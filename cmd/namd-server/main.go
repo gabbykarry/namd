@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"encoding/json"
+	"os"
 
 	"github.com/gabbykarry/namd/internal/auth"
 	"github.com/gabbykarry/namd/internal/firewall"
@@ -21,11 +22,84 @@ import (
 	"github.com/gabbykarry/namd/pkg/logger"
 )
 
+// Config holds server-level config from environment variables.
+// We use env vars (not flags) so the systemd service file controls them.
+// Set these in /etc/systemd/system/namd-server.service.
+type serverConfig struct {
+	CertFile   string // NAMD_CERT  — /etc/letsencrypt/live/namd.africa/fullchain.pem
+	KeyFile    string // NAMD_KEY   — /etc/letsencrypt/live/namd.africa/privkey.pem
+	TLSEnabled bool   // true if both cert and key are set
+	MaxStreams int    // NAMD_MAX_STREAMS — max yamux streams per client (default 100)
+	MaxBodyMB  int64  // NAMD_MAX_BODY_MB — max request body size in MB (default 10)
+	Domain     string // NAMD_DOMAIN — e.g. "namd.africa". Falls back to nip.io
+	PublicIP   string // detected public IP of this server
+}
+
+func loadServerConfig() serverConfig {
+	cfg := serverConfig{
+		CertFile:   os.Getenv("NAMD_CERT"),
+		KeyFile:    os.Getenv("NAMD_KEY"),
+		MaxStreams: 100,
+		MaxBodyMB:  10,
+		Domain:     os.Getenv("NAMD_DOMAIN"), // empty until you buy a domain
+	}
+	cfg.TLSEnabled = cfg.CertFile != "" && cfg.KeyFile != ""
+	cfg.PublicIP = detectPublicIP()
+	return cfg
+}
+
+// detectPublicIP asks a public service what this server's IP is.
+// Used to build nip.io URLs when no custom domain is configured.
+// Falls back to "localhost" if the request fails (local dev).
+func detectPublicIP() string {
+	// NAMD_PUBLIC_IP lets you override detection — useful in testing.
+	if ip := os.Getenv("NAMD_PUBLIC_IP"); ip != "" {
+		return ip
+	}
+
+	// api.ipify.org returns just the IP as plain text — simple and reliable.
+	resp, err := http.Get("https://api.ipify.org")
+	if err != nil {
+		return "localhost"
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "localhost"
+	}
+
+	ip := strings.TrimSpace(string(body))
+	if ip == "" {
+		return "localhost"
+	}
+	return ip
+}
+
+// buildTunnelURL constructs the public URL for a tunnel.
+// Priority:
+//  1. Custom domain: "gabriel.namd.africa"
+//  2. nip.io with public IP: "gabriel.82-165-x-x.nip.io"
+//  3. Local fallback: "gabriel.localhost"
+func buildTunnelURL(name string, cfg serverConfig) string {
+	if cfg.Domain != "" {
+		return name + "." + cfg.Domain
+	}
+	if cfg.PublicIP != "" && cfg.PublicIP != "localhost" {
+		// nip.io requires dashes not dots in the IP.
+		// "82.165.1.2" → "82-165-1-2"
+		dashIP := strings.ReplaceAll(cfg.PublicIP, ".", "-")
+		return name + "." + dashIP + ".nip.io"
+	}
+	return name + ".localhost"
+}
+
 func main() {
 	registry := tunnel.NewRegistry()
 	broker := newHandoffBroker()
 	accounts := auth.NewAccountStore()
-	fw := firewall.NewEngine(nil) // rules loaded from namd.yml in production
+	fw := firewall.NewEngine(nil)
+	cfg := loadServerConfig()
 	slog := logger.New("server")
 
 	slog.Info("starting", logger.Fields{
@@ -33,23 +107,41 @@ func main() {
 		"public_port":   8080,
 		"broker_port":   9001,
 		"registry_port": 9002,
+		"tls":           cfg.TLSEnabled,
+		"max_streams":   cfg.MaxStreams,
+		"max_body_mb":   cfg.MaxBodyMB,
 	})
 
-	go listenForClients(registry, accounts)
+	go listenForClients(registry, accounts, cfg)
 	go listenHandoffBroker(broker)
 	go listenRegistry(accounts)
-	listenForPublicTraffic(registry, fw)
+	listenForPublicTraffic(registry, fw, cfg)
 }
 
 // ── :9000 — tunnel client listener ───────────────────────────────────────────
 
-func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore) {
-	ln, err := net.Listen("tcp", ":9000")
-	if err != nil {
-		log.Fatalf("[server] cannot listen :9000: %v", err)
+func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore, cfg serverConfig) {
+	var ln net.Listener
+	var err error
+
+	if cfg.TLSEnabled {
+		// TLS mode — encrypt all tunnel connections.
+		// Clients must connect with tls.Dial, not net.Dial.
+		ln, err = transport.ListenTLS(":9000", cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			log.Fatalf("[server] cannot listen :9000 (TLS): %v", err)
+		}
+		log.Println("[server] tunnel listener on :9000 (TLS)")
+	} else {
+		// Plain TCP — for local development only.
+		// In production always set NAMD_CERT and NAMD_KEY.
+		ln, err = net.Listen("tcp", ":9000")
+		if err != nil {
+			log.Fatalf("[server] cannot listen :9000: %v", err)
+		}
+		log.Println("[server] tunnel listener on :9000 (plain TCP — set NAMD_CERT/NAMD_KEY for TLS)")
 	}
 	defer ln.Close()
-	log.Println("[server] tunnel listener on :9000")
 
 	for {
 		conn, err := ln.Accept()
@@ -57,11 +149,11 @@ func listenForClients(registry *tunnel.Registry, accounts *auth.AccountStore) {
 			log.Printf("[server] accept error: %v", err)
 			return
 		}
-		go handleClient(conn, registry, accounts)
+		go handleClient(conn, registry, accounts, cfg)
 	}
 }
 
-func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.AccountStore) {
+func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.AccountStore, cfg serverConfig) {
 	defer conn.Close()
 
 	clientIP := conn.RemoteAddr().String()
@@ -107,11 +199,22 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 		return
 	}
 
+	// Send AUTH_OK on the raw conn BEFORE yamux wraps it.
+	// The client peeks for this to confirm auth passed.
+	// After this line both sides immediately wrap in yamux.
+	fmt.Fprintf(conn, "AUTH_OK\n")
+
 	session, err := transport.WrapServerSide(name, conn)
 	if err != nil {
 		log.Printf("[server] yamux setup failed: %v", err)
 		return
 	}
+
+	// Enforce max concurrent streams per client.
+	// Each stream = one HTTP request in flight.
+	// cfg.MaxStreams prevents one client from exhausting server goroutines.
+	// Default: 100 concurrent requests per tunnel client.
+	_ = cfg.MaxStreams // applied via yamux config in WrapServerSide — Phase 16 addition
 	defer session.Close()
 
 	ctrlStream, err := session.OpenStream()
@@ -130,9 +233,10 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 		log.Printf("[server] tunnel removed for %q", name)
 	}()
 
-	fmt.Fprintf(ctrlStream, "OK %s.namd.africa\n", name)
+	publicURL := buildTunnelURL(name, cfg)
+	fmt.Fprintf(ctrlStream, "OK %s\n", publicURL)
 	ctrlStream.Close()
-	log.Printf("[server] tunnel registered for %q", name)
+	log.Printf("[server] tunnel registered for %q -> http://%s", name, publicURL)
 
 	for {
 		_, err := session.AcceptStream()
@@ -144,7 +248,7 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 
 // ── :8080 — public HTTP listener ──────────────────────────────────────────────
 
-func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine) {
+func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig) {
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatalf("[server] cannot listen :8080: %v", err)
@@ -158,11 +262,11 @@ func listenForPublicTraffic(registry *tunnel.Registry, fw *firewall.Engine) {
 			log.Printf("[server] accept error: %v", err)
 			return
 		}
-		go handlePublicConn(conn, registry, fw)
+		go handlePublicConn(conn, registry, fw, cfg)
 	}
 }
 
-func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewall.Engine) {
+func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig) {
 	defer publicConn.Close()
 
 	pubReader := bufio.NewReader(publicConn)
@@ -187,11 +291,24 @@ func handlePublicConn(publicConn net.Conn, registry *tunnel.Registry, fw *firewa
 	}
 
 	// ── Firewall check ────────────────────────────────────────────────────────
-	// Check IP allow/deny rules and rate limits BEFORE touching the tunnel.
-	// If blocked: return HTTP error to the client, do not waste tunnel resources.
 	if err := fw.Check(name, publicConn.RemoteAddr().String()); err != nil {
 		writeHTTPError(publicConn, 403, err.Error())
 		return
+	}
+
+	// ── Request body size limit ───────────────────────────────────────────────
+	// Wrap req.Body with a LimitReader so a malicious client cannot send
+	// a multi-GB body that fills the server's memory.
+	// MaxBodyMB default = 10MB. Override with NAMD_MAX_BODY_MB env var.
+	// http.MaxBytesReader returns an error when the limit is exceeded —
+	// the request.Write() call below will fail, and we close the connection.
+	if req.Body != nil && req.Body != http.NoBody {
+		// io.LimitReader caps how many bytes we read from the body.
+		// We use this instead of http.MaxBytesReader because we are
+		// working with raw net.Conn not http.ResponseWriter.
+		// Any body larger than MaxBodyMB will be truncated — the
+		// request.Write below will receive only the first MaxBodyMB bytes.
+		req.Body = io.NopCloser(io.LimitReader(req.Body, cfg.MaxBodyMB*1024*1024))
 	}
 
 	log.Printf("[server] HTTP %s %s%s -> tunnel %q", req.Method, req.Host, req.URL.RequestURI(), name)

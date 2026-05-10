@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -33,12 +36,64 @@ type Account struct {
 	Banned     bool      `json:"banned"` // can be set to block an account
 }
 
-// NewAccountStore creates a new in-memory account store.
+// accountsFilePath returns the path where accounts are persisted.
+// On the server this is /home/namd/.namd/accounts.json
+// (the namd system user's home directory).
+func accountsFilePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/namd-accounts.json"
+	}
+	return filepath.Join(home, ".namd", "accounts.json")
+}
+
+// NewAccountStore creates an account store and loads any previously
+// persisted accounts from disk. On a fresh server the file does not
+// exist yet — that is fine, we start with an empty store.
 func NewAccountStore() *AccountStore {
-	return &AccountStore{
+	s := &AccountStore{
 		accounts: make(map[string]*Account),
 		log:      logger.New("auth"),
 	}
+	// Load persisted accounts — ignore error on fresh server.
+	_ = s.load()
+	return s
+}
+
+// save writes all accounts to disk as JSON.
+// Must be called WITHOUT holding the mutex — it acquires its own read lock.
+// Calling this while holding a write lock causes a deadlock.
+func (s *AccountStore) save() error {
+	// Snapshot under read lock — fast.
+	s.mu.RLock()
+	data, err := json.MarshalIndent(s.accounts, "", "  ")
+	s.mu.RUnlock()
+
+	if err != nil {
+		return err
+	}
+
+	path := accountsFilePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+// load reads accounts from disk into memory.
+// Called once at startup.
+func (s *AccountStore) load() error {
+	path := accountsFilePath()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil // fresh server — no accounts yet
+	}
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return json.Unmarshal(data, &s.accounts)
 }
 
 // Register adds a new account.
@@ -46,23 +101,28 @@ func NewAccountStore() *AccountStore {
 // Returns an error if the name is already taken.
 func (s *AccountStore) Register(name, email, token string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, exists := s.accounts[name]; exists {
+		s.mu.Unlock()
 		return fmt.Errorf("name %q is already registered", name)
 	}
 
-	// Store the token hash — never the token itself.
-	// sha256(token) → hex string
-	// If this database is compromised, attackers cannot use the hashes
-	// to authenticate because they do not have the original tokens.
 	hash := hashToken(token)
-
 	s.accounts[name] = &Account{
 		Name:      name,
 		Email:     email,
 		TokenHash: hash,
 		CreatedAt: time.Now(),
+	}
+
+	// Release lock BEFORE calling save().
+	// save() acquires its own read lock — calling it while holding
+	// the write lock causes a deadlock (write lock blocks read lock).
+	s.mu.Unlock()
+
+	// Persist to disk so this account survives a server restart.
+	if err := s.save(); err != nil {
+		s.log.Warn("accounts_save_failed", logger.Fields{"err": err.Error()})
 	}
 
 	s.log.Audit("account_created", logger.Fields{

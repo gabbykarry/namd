@@ -198,13 +198,59 @@ func runStart(configPath string) error {
 	serverAddr := resolveServerAddr(cfg)
 	log.Printf("[namd] connecting to %s as @%s", serverAddr, creds.Name)
 
-	conn, err := net.Dial("tcp", serverAddr)
-	if err != nil {
-		return fmt.Errorf("cannot connect to %s: %w", serverAddr, err)
+	// ── Connect to server ────────────────────────────────────────────────────
+	// Use TLS if NAMD_TLS=true or if connecting to a non-localhost address.
+	// TLS encrypts the token and all tunnel traffic — always use in production.
+	// Local development (localhost) uses plain TCP by default for simplicity.
+	useTLS := os.Getenv("NAMD_TLS") == "true"
+	if !strings.HasPrefix(serverAddr, "localhost") && !strings.HasPrefix(serverAddr, "127.0.0.1") {
+		// Non-localhost = production server = always use TLS.
+		useTLS = true
+	}
+
+	var conn net.Conn
+	var dialErr error
+	if useTLS {
+		// skipVerify=false in production — verify server certificate.
+		// Set NAMD_TLS_SKIP_VERIFY=true only for self-signed certs in testing.
+		skipVerify := os.Getenv("NAMD_TLS_SKIP_VERIFY") == "true"
+		conn, dialErr = transport.DialTLS(serverAddr, skipVerify)
+		if dialErr == nil {
+			log.Printf("[namd] connected (TLS encrypted)")
+		}
+	} else {
+		conn, dialErr = net.Dial("tcp", serverAddr)
+		if dialErr == nil {
+			log.Printf("[namd] connected (plain TCP — use a remote server for TLS)")
+		}
+	}
+	if dialErr != nil {
+		return fmt.Errorf("cannot connect to %s: %w", serverAddr, dialErr)
 	}
 
 	// Send HELLO with token — server verifies before registering tunnel.
 	fmt.Fprintf(conn, "HELLO %s %s\n", creds.Name, creds.Token)
+
+	// ── Read pre-yamux auth response ────────────────────────────────────────
+	// Protocol:
+	//   server sends "AUTH_OK\n"    → auth passed, both sides wrap in yamux
+	//   server sends "ERROR ...\n"  → auth failed, show error and exit
+	//
+	// We read this BEFORE wrapping in yamux because yamux cannot handle
+	// plain text — it expects binary framing from the first byte.
+	preReader := bufio.NewReader(conn)
+	authResp, err := preReader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("reading auth response: %w", err)
+	}
+	authResp = strings.TrimSpace(authResp)
+	if strings.HasPrefix(authResp, "ERROR") {
+		return fmt.Errorf("%s", strings.TrimPrefix(authResp, "ERROR "))
+	}
+	if authResp != "AUTH_OK" {
+		return fmt.Errorf("unexpected auth response: %q", authResp)
+	}
+	// AUTH_OK received — both sides now wrap in yamux
 
 	session, err := transport.WrapClientSide(cfg.Identity.Name, conn)
 	if err != nil {

@@ -652,6 +652,13 @@ func runAccept(configPath string) error {
 		return fmt.Errorf("config error: %w", err)
 	}
 
+	// Read identity from credentials file — not namd.yml.
+	// This lets you run namd accept as a different user than namd.yml specifies.
+	creds, err := auth.LoadCredentials()
+	if err != nil {
+		return fmt.Errorf("not registered — run: namd auth register: %w", err)
+	}
+
 	maxDur, err := time.ParseDuration(cfg.Handoff.MaxDuration)
 	if err != nil {
 		maxDur = 60 * time.Minute
@@ -659,15 +666,15 @@ func runAccept(configPath string) error {
 
 	serverAddr := resolveServerAddr(cfg)
 	receiver := handoff.NewReceiver(
-		cfg.Identity.Name,
+		creds.Name,
 		serverAddr,
 		os.Getenv("NAMD_SECRET"),
 		cfg.Handoff.Sandbox,
 		maxDur,
 	)
 
-	log.Printf("[handoff] waiting for handoff requests as @%s", cfg.Identity.Name)
-	receiver.Listen() // blocks forever
+	log.Printf("[handoff] waiting for handoff requests as @%s", creds.Name)
+	receiver.Listen()
 	return nil
 }
 

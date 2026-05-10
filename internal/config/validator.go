@@ -371,12 +371,13 @@ func validateHandoff(cfg *Config) error {
 
 	if h.Sandbox != "" {
 		validSandboxes := map[string]bool{
-			"docker": true,
-			"wasm":   true,
+			"docker":  true,
+			"wasm":    true,
+			"process": true,
 		}
 		if !validSandboxes[h.Sandbox] {
 			return fmt.Errorf(
-				"config: handoff.sandbox %q is not valid — valid options: docker, wasm",
+				"config: handoff.sandbox %q is not valid — valid options: docker, process, wasm",
 				h.Sandbox,
 			)
 		}

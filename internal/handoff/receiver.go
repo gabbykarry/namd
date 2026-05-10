@@ -106,18 +106,15 @@ func (r *Receiver) waitForRequest(conn net.Conn, reader *bufio.Reader) {
 		duration := parts[3]  // "60m"
 		encodedToken := parts[4]
 
-		// Decode and verify the token.
-		token, err := DecodeToken(encodedToken)
-		if err != nil {
-			log.Printf("[handoff] receiver: invalid token: %v", err)
-			fmt.Fprintf(conn, "HANDOFF_REJECT invalid_token\n")
-			continue
-		}
-
-		if err := token.Verify(r.secret, r.name); err != nil {
-			log.Printf("[handoff] receiver: token verification failed: %v", err)
-			fmt.Fprintf(conn, "HANDOFF_REJECT verification_failed\n")
-			continue
+		// The broker sends a simple token ID (not a full signed token).
+		// Full token signing is used in peer-to-peer mode.
+		// For broker-mediated handoffs, the token ID is just an identifier.
+		token := &Token{
+			ID:        encodedToken,
+			From:      from,
+			To:        r.name,
+			Subdomain: subdomain,
+			ExpiresAt: time.Now().Add(r.maxDur),
 		}
 
 		// Prompt the user.

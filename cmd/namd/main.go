@@ -306,7 +306,7 @@ func runStart(configPath string) error {
 	}
 
 	publicURL := strings.TrimPrefix(response, "OK ")
-	log.Printf("[namd] tunnel active  -> http://%s", publicURL)
+	log.Printf("[namd] tunnel active  -> %s", publicURL)
 	if cfg.Dashboard.Enabled {
 		log.Printf("[namd] dashboard      -> http://localhost:%d", cfg.Dashboard.Port)
 	}
@@ -519,8 +519,15 @@ func buildWebhookEngine(cfg *config.Config, localURL string) (*webhook.Engine, e
 }
 
 func resolveServerAddr(cfg *config.Config) string {
+	// Priority:
+	// 1. NAMD_SERVER env var (highest — for CI, scripts, overrides)
+	// 2. server.addr in namd.yml
+	// 3. localhost:9000 (local dev default)
 	if addr := os.Getenv("NAMD_SERVER"); addr != "" {
 		return addr
+	}
+	if cfg.Server.Addr != "" {
+		return cfg.Server.Addr
 	}
 	return "localhost:9000"
 }

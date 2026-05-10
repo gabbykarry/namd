@@ -18,6 +18,7 @@ package config
 type Config struct {
 	Version   string              `yaml:"version"`
 	Identity  IdentityConfig      `yaml:"identity"`
+	Server    ServerConfig        `yaml:"server"`
 	Domain    DomainConfig        `yaml:"domain"`
 	Tunnels   map[string]Tunnel   `yaml:"tunnels"`
 	Firewall  map[string]Firewall `yaml:"firewall"`
@@ -40,6 +41,17 @@ type Config struct {
 type IdentityConfig struct {
 	Name   string `yaml:"name"`
 	Region string `yaml:"region"`
+}
+
+// ─────────────────────────────────────────────
+// SERVER
+// ─────────────────────────────────────────────
+
+// ServerConfig tells the client which namd server to connect to.
+// If empty, falls back to NAMD_SERVER env var, then localhost:9000.
+type ServerConfig struct {
+	// Addr is the server address e.g. "namd.online:9000"
+	Addr string `yaml:"addr"`
 }
 
 // ─────────────────────────────────────────────

@@ -124,6 +124,10 @@ func main() {
 		adminSrv := admin.NewServer(9003, adminToken, adminStore)
 		adminSrv.Start()
 	}()
+	// If TLS is configured, also serve HTTPS on :443
+	if cfg.TLSEnabled {
+		go listenForPublicTrafficTLS(registry, fw, cfg)
+	}
 	listenForPublicTraffic(registry, fw, cfg)
 }
 
@@ -252,7 +256,7 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 	publicURL := buildTunnelURL(name, cfg)
 	fmt.Fprintf(ctrlStream, "OK %s\n", publicURL)
 	ctrlStream.Close()
-	log.Printf("[server] tunnel registered for %q -> http://%s", name, publicURL)
+	log.Printf("[server] tunnel registered for %q -> %s", name, publicURL)
 
 	// Register in admin store so admin panel shows this tunnel.
 	// Pass a disconnect function so admin can force-close it.
@@ -652,4 +656,25 @@ func writeJSON(conn net.Conn, v interface{}) {
 		return
 	}
 	fmt.Fprintf(conn, "%s\n", string(data))
+}
+
+// listenForPublicTrafficTLS serves HTTPS on :443.
+// Only started when NAMD_CERT and NAMD_KEY are configured.
+// Handles the same traffic as :8080 but encrypted.
+func listenForPublicTrafficTLS(registry *tunnel.Registry, fw *firewall.Engine, cfg serverConfig) {
+	ln, err := transport.ListenTLS(":443", cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		log.Fatalf("[server] cannot listen :443 (TLS): %v", err)
+	}
+	defer ln.Close()
+	log.Println("[server] public HTTPS listener on :443")
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Printf("[server] accept error on :443: %v", err)
+			return
+		}
+		go handlePublicConn(conn, registry, fw, cfg)
+	}
 }

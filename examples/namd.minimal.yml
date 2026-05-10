@@ -1,8 +1,11 @@
 version: "1"
 
 identity:
-  name: yourname        # becomes yourname.namd.africa
+  name: yourname        # becomes yourname.namd.online
   region: af-west       # af-west | af-east | af-south
+
+server:
+  addr: namd.online:9000
 
 tunnels:
   api:

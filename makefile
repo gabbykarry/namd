@@ -66,6 +66,12 @@ deploy: build-linux
 	scp -i $(VPS_KEY) $(BIN)/namd-server-linux $(VPS_USER)@$(VPS_HOST):/usr/local/bin/namd-server
 	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "chmod +x /usr/local/bin/namd-server && systemctl restart namd-server && systemctl status namd-server --no-pager"
 
+# Upload landing page to VPS (served from /var/www/namd/index.html)
+.PHONY: deploy-landing
+deploy-landing:
+	scp -i $(VPS_KEY) landing/index.html $(VPS_USER)@$(VPS_HOST):/var/www/namd/index.html
+	@echo "Landing page deployed to namd.online"
+
 .PHONY: logs
 logs:
 	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "journalctl -u namd-server -f --no-pager"
@@ -101,6 +107,21 @@ run-tls-off:
 .PHONY: run-server
 run-server:
 	$(GO) run ./cmd/namd-server
+
+# Serve landing page locally on port 4000
+.PHONY: landing
+landing:
+	@echo "Serving landing page on http://localhost:4000"
+	@cd landing && npx serve . -p 4000
+
+# Run everything locally — server, client, and landing page
+.PHONY: dev
+dev:
+	@echo "Starting local dev environment..."
+	@$(GO) run ./cmd/namd-server &
+	@sleep 1
+	@cd landing && npx serve . -p 4000 &
+	@$(GO) run ./cmd/namd start
 
 .PHONY: test
 test:

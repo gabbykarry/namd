@@ -312,11 +312,21 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 		ctrlStream.Close()
 		return
 	}
+	// Track this session so we only remove OUR entry on disconnect.
+	// If a HANDOFF_TUNNEL replaced our registry entry, we must not remove it.
+	mySession := session
 	defer func() {
-		registry.Remove(name)
-		log.Printf("[server] tunnel removed for %q", name)
-		if adminStore != nil {
-			adminStore.AddAuditEvent("tunnel_disconnected", name, clientIP, "")
+		current, ok := registry.Get(name)
+		if ok && current == mySession {
+			// Still our session — safe to remove.
+			registry.Remove(name)
+			log.Printf("[server] tunnel removed for %q", name)
+			if adminStore != nil {
+				adminStore.AddAuditEvent("tunnel_disconnected", name, clientIP, "")
+			}
+		} else {
+			// Our entry was replaced by a handoff — leave it alone.
+			log.Printf("[server] tunnel %q handed off — not removing", name)
 		}
 	}()
 

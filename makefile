@@ -1,9 +1,11 @@
 MODULE   := github.com/gabbykarry/namd
 GO       := go
 BIN      := ./bin
-VPS_HOST ?= 159.89.0.78
+VPS_HOST ?= your-vps-ip
 VPS_USER ?= root
 VPS_KEY  ?= ~/.ssh/id_rsa
+
+-include Makefile.local
 
 .PHONY: create
 create:
@@ -66,7 +68,7 @@ deploy: build-linux
 	scp -i $(VPS_KEY) $(BIN)/namd-server-linux $(VPS_USER)@$(VPS_HOST):/usr/local/bin/namd-server
 	ssh -i $(VPS_KEY) $(VPS_USER)@$(VPS_HOST) "chmod +x /usr/local/bin/namd-server && systemctl restart namd-server && systemctl status namd-server --no-pager"
 
-# Upload landing page to VPS (served from /var/www/namd/index.html)
+# Upload landing page to VPS 
 .PHONY: deploy-landing
 deploy-landing:
 	scp -i $(VPS_KEY) landing/index.html $(VPS_USER)@$(VPS_HOST):/var/www/namd/index.html

@@ -472,4 +472,4 @@ MIT — see [LICENSE](LICENSE)
 
 <div align="center">
 Built in Nigeria 🇳🇬 for African developers
-</div>
+</div># namd

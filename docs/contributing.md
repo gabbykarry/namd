@@ -177,7 +177,7 @@ refactor(cache): extract shouldCache into helper
 
 ## Security issues
 
-Do not open public issues for security vulnerabilities. Email directly: security@namd.africa
+Do not open public issues for security vulnerabilities. Email directly: security@namd.online
 
 ---
 

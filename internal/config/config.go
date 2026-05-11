@@ -65,8 +65,8 @@ type ServerConfig struct {
 //     User adds the domain in the web UI or here in the yml.
 //     We verify ownership via DNS TXT record then get a cert.
 //
-//  2. namd subdomain — user gets gabriel.namd.africa automatically.
-//     Wildcard SSL (*.namd.africa) already covers this.
+//  2. namd subdomain — user gets gabriel.namd.online automatically.
+//     Wildcard SSL (*.namd.online) already covers this.
 //     Nothing extra needed — just set Subdomain field.
 //
 //  3. Fallback pool  — if nothing is set, we loop through FallbackPool,
@@ -85,8 +85,8 @@ type DomainConfig struct {
 	Custom string `yaml:"custom"`
 
 	// Subdomain is the user's prefix on our managed domain.
-	// "gabriel" → "gabriel.namd.africa"
-	// If namd.africa is unavailable, we walk the FallbackPool.
+	// "gabriel" → "gabriel.namd.online"
+	// If namd.online is unavailable, we walk the FallbackPool.
 	Subdomain string `yaml:"subdomain"`
 
 	// SSL controls how TLS certificates are handled.
@@ -150,7 +150,7 @@ type SSLConfig struct {
 // format like "127.0.0.1:3000" — a string handles both cases.
 //
 // Subdomain — overrides the identity-level domain for THIS tunnel only.
-// "gabriel-api" → gabriel-api.namd.africa
+// "gabriel-api" → gabriel-api.namd.online
 // Useful when you run multiple tunnels and want distinct URLs per tunnel.
 //
 // Auth — optional bearer token protection for this tunnel.
@@ -279,7 +279,7 @@ type WebhookConfig struct {
 // Path — the specific URL path namd intercepts.
 //
 //	e.g. "/webhooks/payment"
-//	When gabriel.namd.africa/webhooks/payment receives a request,
+//	When gabriel.namd.online/webhooks/payment receives a request,
 //	namd intercepts it, passes it to the Adapter, then forwards it
 //	to your local server. Your local server sees it as normal HTTP.
 //

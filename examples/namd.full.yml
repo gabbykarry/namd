@@ -1,7 +1,7 @@
 version: "1"
 
 # Who you are on the namd network.
-# name becomes your @handle and your subdomain: gabriel.namd.africa
+# name becomes your @handle and your subdomain: gabriel.namd.online
 identity:
   name: gabriel
   region: af-west
@@ -19,9 +19,9 @@ domain:
     email: gabriel@example.com
     auto_renew: true
 
-  # Fallback pool — tried in order if namd.africa is unavailable
+  # Fallback pool — tried in order if namd.online is unavailable
   fallback_pool:
-    - namd.africa
+    - namd.online
     - namd.is-a.dev
 
 # Tunnel definitions — what local services to expose
@@ -29,7 +29,7 @@ tunnels:
   api:
     proto: http
     addr: "3000"
-    subdomain: gabriel       # gabriel.namd.africa
+    subdomain: gabriel       # gabriel.namd.online
     auth:
       type: bearer
       token: ${NAMD_TOKEN}   # read from environment — never hardcode

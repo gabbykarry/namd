@@ -32,7 +32,7 @@ type Token struct {
 	To string `json:"to"`
 
 	// Subdomain is the public subdomain being handed off.
-	// "gabriel" means gabriel.namd.africa routes to tunde after handoff.
+	// "gabriel" means gabriel.namd.online routes to tunde after handoff.
 	Subdomain string `json:"subdomain"`
 
 	// ExpiresAt is when this token becomes invalid.

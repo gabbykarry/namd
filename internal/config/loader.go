@@ -17,7 +17,7 @@ import (
 // Order matters — we try top to bottom. First working domain wins.
 // "working" means: DNS resolves + wildcard cert is obtainable.
 var DefaultFallbackPool = []string{
-	"namd.africa",   // our own — always first priority
+	"namd.online",   // our own — always first priority
 	"namd.is-a.dev", // is-a.dev — free subdomain service for devs
 	"loca.lt",       // localtonet free tier
 	"serveo.net",    // serveo free tier

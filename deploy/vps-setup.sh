@@ -18,13 +18,13 @@
 #   ssh root@YOUR_VPS_IP "bash /root/vps-setup.sh YOUR_DOMAIN YOUR_EMAIL"
 #
 # Example:
-#   bash vps-setup.sh namd.africa gabriel@example.com
+#   bash vps-setup.sh namd.online gabriel@example.com
 # =============================================================================
 
 set -e  # exit immediately if any command fails
 
-DOMAIN=${1:-"namd.africa"}
-EMAIL=${2:-"admin@namd.africa"}
+DOMAIN=${1:-"namd.online"}
+EMAIL=${2:-"admin@namd.online"}
 NAMD_USER="namd"
 
 echo "============================================="

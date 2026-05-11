@@ -22,7 +22,7 @@ import (
 // If stolen: run `namd auth revoke` to invalidate it on the server.
 type Credentials struct {
 	// Name is the developer's identity on the namd network.
-	// Becomes the subdomain: gabriel → gabriel.namd.africa
+	// Becomes the subdomain: gabriel → gabriel.namd.online
 	Name string `json:"name"`
 
 	// Token is the secret that proves this client owns the name.
@@ -31,7 +31,7 @@ type Credentials struct {
 	Token string `json:"token"`
 
 	// ServerURL is the namd server this token was issued by.
-	// A token from namd.africa does not work on a different server.
+	// A token from namd.online does not work on a different server.
 	ServerURL string `json:"server_url"`
 
 	// IssuedAt records when this credential was created.

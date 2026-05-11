@@ -27,12 +27,12 @@ import (
 // We use env vars (not flags) so the systemd service file controls them.
 // Set these in /etc/systemd/system/namd-server.service.
 type serverConfig struct {
-	CertFile   string // NAMD_CERT  — /etc/letsencrypt/live/namd.africa/fullchain.pem
-	KeyFile    string // NAMD_KEY   — /etc/letsencrypt/live/namd.africa/privkey.pem
+	CertFile   string // NAMD_CERT  — /etc/letsencrypt/live/namd.online/fullchain.pem
+	KeyFile    string // NAMD_KEY   — /etc/letsencrypt/live/namd.online/privkey.pem
 	TLSEnabled bool   // true if both cert and key are set
 	MaxStreams int    // NAMD_MAX_STREAMS — max yamux streams per client (default 100)
 	MaxBodyMB  int64  // NAMD_MAX_BODY_MB — max request body size in MB (default 10)
-	Domain     string // NAMD_DOMAIN — e.g. "namd.africa". Falls back to nip.io
+	Domain     string // NAMD_DOMAIN — e.g. "namd.online". Falls back to nip.io
 	PublicIP   string // detected public IP of this server
 }
 
@@ -79,7 +79,7 @@ func detectPublicIP() string {
 
 // buildTunnelURL constructs the public URL for a tunnel.
 // Priority:
-//  1. Custom domain: "gabriel.namd.africa"
+//  1. Custom domain: "gabriel.namd.online"
 //  2. nip.io with public IP: "gabriel.82-165-x-x.nip.io"
 //  3. Local fallback: "gabriel.localhost"
 func buildTunnelURL(name string, cfg serverConfig) string {

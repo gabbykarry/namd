@@ -54,7 +54,7 @@ func NewSender(req HandoffRequest, secret string) *Sender {
 // Returns the issued token if accepted, error if rejected or timed out.
 func (s *Sender) Initiate() (*Token, error) {
 	log.Printf("[handoff] requesting handoff to @%s", s.req.To)
-	log.Printf("[handoff] this will transfer %s.namd.africa to @%s for up to %s",
+	log.Printf("[handoff] this will transfer %s.namd.online to @%s for up to %s",
 		s.req.Subdomain, s.req.To, s.req.MaxDuration)
 
 	// Connect to the server's handoff coordination port.
@@ -79,7 +79,7 @@ func (s *Sender) Initiate() (*Token, error) {
 	// Identify ourselves and declare handoff intent.
 	// Protocol:
 	//   sender → server: "HANDOFF_INIT gabriel tunde gabriel 60m"
-	//   server → receiver: "HANDOFF_REQUEST gabriel gabriel.namd.africa 60m <token>"
+	//   server → receiver: "HANDOFF_REQUEST gabriel gabriel.namd.online 60m <token>"
 	//   receiver → server: "HANDOFF_ACCEPT <token_id>"
 	//   server → sender: "HANDOFF_CONFIRMED <encoded_token>"
 	fmt.Fprintf(conn, "HANDOFF_INIT %s %s %s %s\n",
@@ -127,7 +127,7 @@ func (s *Sender) Initiate() (*Token, error) {
 		token.ExpiresAt.Format("15:04:05"),
 		token.TimeRemaining().Round(time.Minute),
 	)
-	log.Printf("[handoff]   %s.namd.africa now routes to @%s", s.req.Subdomain, s.req.To)
+	log.Printf("[handoff]   %s.namd.online now routes to @%s", s.req.Subdomain, s.req.To)
 	log.Printf("[handoff]   you can safely close your laptop")
 
 	return token, nil
@@ -156,6 +156,6 @@ func Cancel(serverAddr, from, subdomain string) error {
 		return fmt.Errorf("handoff cancel: unexpected response: %q", response)
 	}
 
-	log.Printf("[handoff] cancelled — %s.namd.africa routing removed", subdomain)
+	log.Printf("[handoff] cancelled — %s.namd.online routing removed", subdomain)
 	return nil
 }

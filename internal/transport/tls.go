@@ -13,8 +13,8 @@ import (
 //
 // In production these live at:
 //
-//	/etc/letsencrypt/live/namd.africa/fullchain.pem
-//	/etc/letsencrypt/live/namd.africa/privkey.pem
+//	/etc/letsencrypt/live/namd.online/fullchain.pem
+//	/etc/letsencrypt/live/namd.online/privkey.pem
 func ServerTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -82,7 +82,7 @@ func ListenTLS(addr, certFile, keyFile string) (net.Listener, error) {
 // DialTLS opens a TLS-encrypted outbound TCP connection.
 // Used by the namd client to connect to the server.
 //
-// addr       — "namd.africa:9000"
+// addr       — "namd.online:9000"
 // skipVerify — false in production, true in local dev
 func DialTLS(addr string, skipVerify bool) (net.Conn, error) {
 	cfg := ClientTLSConfig(skipVerify)

@@ -6,7 +6,7 @@ import "sync"
 //
 // The server holds ONE registry. Every time a namd client connects
 // and identifies itself, a Session is added here.
-// Every time a browser request comes in for "gabriel.namd.africa",
+// Every time a browser request comes in for "gabriel.namd.online",
 // the server looks up "gabriel" in here to find the right connection.
 //
 // WHY thread-safe?

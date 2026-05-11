@@ -34,12 +34,12 @@ You need two DNS records:
 
 ```
 Type    Name              Value
-A       namd.africa       YOUR_VPS_IP
-A       *.namd.africa     YOUR_VPS_IP    ← wildcard for subdomains
+A       namd.online       YOUR_VPS_IP
+A       *.namd.online     YOUR_VPS_IP    ← wildcard for subdomains
 ```
 
-The wildcard `*.namd.africa` is what makes `gabriel.namd.africa`,
-`tunde.namd.africa` etc. all work automatically.
+The wildcard `*.namd.online` is what makes `gabriel.namd.online`,
+`tunde.namd.online` etc. all work automatically.
 
 **Using a free domain from is-a.dev:**
 1. Go to https://is-a.dev
@@ -150,7 +150,7 @@ apt update && apt install caddy
 
 Create `/etc/caddy/Caddyfile`:
 ```
-*.namd.africa, namd.africa {
+*.namd.online, namd.online {
     reverse_proxy localhost:8080
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
@@ -161,7 +161,7 @@ Create `/etc/caddy/Caddyfile`:
 For wildcard SSL you need DNS challenge — requires Cloudflare or another DNS provider with an API. If you just want basic SSL for specific subdomains, use:
 
 ```
-gabriel.namd.africa {
+gabriel.namd.online {
     reverse_proxy localhost:8080
 }
 ```
@@ -180,7 +180,7 @@ Or add to namd.yml (when we add server address to config — Phase 11):
 
 ```yaml
 server:
-  addr: namd.africa:9000
+  addr: namd.online:9000
 ```
 
 Run:
@@ -190,7 +190,7 @@ namd start
 
 You should see:
 ```
-[namd] tunnel active -> http://gabriel.namd.africa
+[namd] tunnel active -> http://gabriel.namd.online
 ```
 
 And it actually works from the real internet.

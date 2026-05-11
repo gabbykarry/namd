@@ -42,25 +42,62 @@ namd is free, open source, and built with African payment APIs in mind.
 
 ## Install
 
-**Go install (recommended for Go developers):**
+### Option A — Go install (if you have Go installed)
+
 ```bash
 go install github.com/gabbykarry/namd/cmd/namd@latest
 ```
 
-**Download binary:**
+This downloads, compiles, and installs namd to `~/go/bin/namd` automatically.
+Make sure `~/go/bin` is in your PATH.
+
+---
+
+### Option B — Download binary (no Go required)
+
+**How to know which one to download:**
+
+| Your computer | Download this |
+|--------------|---------------|
+| MacBook with M1, M2, M3, M4 chip (2020 or newer) | `namd-darwin-arm64` |
+| MacBook with Intel chip (2019 or older) | `namd-darwin-amd64` |
+| Linux PC or VPS (most common) | `namd-linux-amd64` |
+| Linux on Raspberry Pi or ARM server | `namd-linux-arm64` |
+| Windows PC | `namd-windows-amd64.exe` |
+
+**Not sure which Mac you have?** Click the Apple menu → About This Mac → look for "Apple M1/M2/M3" (arm64) or "Intel" (amd64).
+
+---
+
+**macOS — Apple Silicon (M1/M2/M3/M4):**
 ```bash
-# macOS Apple Silicon
 curl -L https://github.com/gabbykarry/namd/releases/latest/download/namd-darwin-arm64 -o namd
-chmod +x namd && sudo mv namd /usr/local/bin/
-
-# macOS Intel
-curl -L https://github.com/gabbykarry/namd/releases/latest/download/namd-darwin-amd64 -o namd
-chmod +x namd && sudo mv namd /usr/local/bin/
-
-# Linux
-curl -L https://github.com/gabbykarry/namd/releases/latest/download/namd-linux-amd64 -o namd
-chmod +x namd && sudo mv namd /usr/local/bin/
+chmod +x namd
+sudo mv namd /usr/local/bin/
+namd version
 ```
+
+**macOS — Intel:**
+```bash
+curl -L https://github.com/gabbykarry/namd/releases/latest/download/namd-darwin-amd64 -o namd
+chmod +x namd
+sudo mv namd /usr/local/bin/
+namd version
+```
+
+**Linux (most VPS, Ubuntu, Debian, Fedora):**
+```bash
+curl -L https://github.com/gabbykarry/namd/releases/latest/download/namd-linux-amd64 -o namd
+chmod +x namd
+sudo mv namd /usr/local/bin/
+namd version
+```
+
+**Windows:**
+
+Download `namd-windows-amd64.exe` from the [Releases page](https://github.com/gabbykarry/namd/releases/latest), rename it to `namd.exe`, and move it to a folder in your PATH (e.g. `C:\Windows\System32\`).
+
+Or use WSL (Windows Subsystem for Linux) and follow the Linux instructions above.
 
 ---
 
@@ -472,4 +509,4 @@ MIT — see [LICENSE](LICENSE)
 
 <div align="center">
 Built in Nigeria 🇳🇬 for African developers
-</div># namd
+</div>

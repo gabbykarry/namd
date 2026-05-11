@@ -882,15 +882,52 @@
     <h2 class="section-title">Three steps.</h2>
     <p class="section-sub">No account on a foreign startup's platform. Just install, register once, run.</p>
 
+    <p style="font-size:13px;color:var(--gray);margin-bottom:20px">
+      <strong style="color:var(--white)">Step 1 — Install.</strong>
+      Pick the right binary for your machine:
+    </p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px;font-size:12px">
+      <div style="background:#0f0f0f;padding:16px 20px">
+        <div style="color:var(--green);font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">MacBook M1/M2/M3/M4 (2020+)</div>
+        <code style="color:var(--white);font-family:var(--font-mono);font-size:11px">namd-darwin-arm64</code>
+      </div>
+      <div style="background:#0f0f0f;padding:16px 20px">
+        <div style="color:var(--green);font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">MacBook Intel (2019 or older)</div>
+        <code style="color:var(--white);font-family:var(--font-mono);font-size:11px">namd-darwin-amd64</code>
+      </div>
+      <div style="background:#0f0f0f;padding:16px 20px">
+        <div style="color:var(--green);font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Linux / Ubuntu / VPS</div>
+        <code style="color:var(--white);font-family:var(--font-mono);font-size:11px">namd-linux-amd64</code>
+      </div>
+      <div style="background:#0f0f0f;padding:16px 20px">
+        <div style="color:var(--green);font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Windows</div>
+        <code style="color:var(--white);font-family:var(--font-mono);font-size:11px">namd-windows-amd64.exe</code>
+      </div>
+    </div>
+
     <div class="install-block">
       <code>go install github.com/gabbykarry/namd/cmd/namd@latest</code>
       <button class="copy-btn" onclick="copy(this, 'go install github.com/gabbykarry/namd/cmd/namd@latest')">copy</button>
     </div>
 
+    <p style="font-size:11px;color:#444;margin:-8px 0 20px;font-family:var(--font-mono)">
+      or <a href="https://github.com/gabbykarry/namd/releases/latest" target="_blank" style="color:var(--green)">download binary →</a>
+      (no Go required) — check Apple menu → About This Mac to find your chip
+    </p>
+
+    <p style="font-size:13px;color:var(--gray);margin-bottom:20px">
+      <strong style="color:var(--white)">Step 2 — Register</strong> (free, one time):
+    </p>
+
     <div class="install-block">
       <code>namd auth register --name yourname --email you@example.com</code>
       <button class="copy-btn" onclick="copy(this, 'namd auth register --name yourname --email you@example.com')">copy</button>
     </div>
+
+    <p style="font-size:13px;color:var(--gray);margin-bottom:20px">
+      <strong style="color:var(--white)">Step 3 — Start your tunnel:</strong>
+    </p>
 
     <div class="install-block">
       <code>namd start</code>

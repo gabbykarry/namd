@@ -421,7 +421,24 @@ func handleStream(
 
 	localConn, err := net.Dial("tcp", addr)
 	if err != nil {
-		stream.Write([]byte("HTTP/1.0 502 Bad Gateway\r\n\r\nLocal app is not running.\n"))
+		body := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><title>App not running — namd</title></head>
+<body style="font-family:-apple-system,sans-serif;max-width:560px;margin:80px auto;padding:24px;background:#0a0a0a;color:#e0e0e0">
+  <h2 style="font-size:24px;font-weight:700;margin-bottom:12px;color:#fff">Your app is not running</h2>
+  <p style="color:#888;margin-bottom:24px">namd tunnel is live but nothing is listening on <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px;color:#4ade80">%s</code>.</p>
+  <p style="color:#666;font-size:14px;margin-bottom:8px">Start your app then refresh:</p>
+  <pre style="background:#111;border:1px solid #222;border-radius:6px;padding:14px;font-size:13px;color:#ccc">npm run dev
+python manage.py runserver
+node server.js
+go run main.go</pre>
+  <p style="margin-top:24px;font-size:12px;color:#333">This page will work once your app starts.</p>
+</body>
+</html>`, addr)
+		fmt.Fprintf(stream,
+			"HTTP/1.0 502 Bad Gateway\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s",
+			len(body), body,
+		)
 		stats.RecordRequest(dashboard.RequestLog{
 			Method: method, Path: path, StatusCode: 502,
 			Duration: time.Since(start), Timestamp: start, TunnelName: tunnelName,

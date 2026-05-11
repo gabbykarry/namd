@@ -99,12 +99,47 @@ func (s *AccountStore) load() error {
 // Register adds a new account.
 // Called by the server's registration handler.
 // Returns an error if the name is already taken.
+// reservedNames cannot be registered by users.
+var reservedNames = map[string]bool{
+	"admin": true, "root": true, "api": true, "www": true,
+	"mail": true, "email": true, "ftp": true, "ssh": true,
+	"namd": true, "dashboard": true, "health": true, "status": true,
+	"static": true, "assets": true, "cdn": true, "media": true,
+	"blog": true, "docs": true, "help": true, "support": true,
+	"billing": true, "account": true, "login": true, "signup": true,
+	"register": true, "auth": true, "oauth": true, "dev": true,
+	"staging": true, "prod": true, "production": true, "test": true,
+	"demo": true, "example": true, "localhost": true, "broker": true,
+	"tunnel": true, "registry": true, "landing": true, "server": true,
+}
+
 func (s *AccountStore) Register(name, email, token string) error {
+	// Validate name format — only lowercase letters, numbers, hyphens.
+	if len(name) < 2 {
+		return fmt.Errorf("name must be at least 2 characters")
+	}
+	if len(name) > 32 {
+		return fmt.Errorf("name must be 32 characters or less")
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+			return fmt.Errorf("name can only contain lowercase letters, numbers, and hyphens")
+		}
+	}
+	if name[0] == '-' || name[len(name)-1] == '-' {
+		return fmt.Errorf("name cannot start or end with a hyphen")
+	}
+
+	// Block reserved names.
+	if reservedNames[name] {
+		return fmt.Errorf("name %q is reserved — please choose a different name", name)
+	}
+
 	s.mu.Lock()
 
 	if _, exists := s.accounts[name]; exists {
 		s.mu.Unlock()
-		return fmt.Errorf("name %q is already registered", name)
+		return fmt.Errorf("name %q is already taken — please choose a different name", name)
 	}
 
 	hash := hashToken(token)

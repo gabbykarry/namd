@@ -3,27 +3,30 @@ package handoff
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/hashicorp/yamux"
 )
 
 // Receiver manages the receiver side of a handoff.
-// Tunde creates a Receiver when namd gets a HANDOFF_REQUEST from the server.
-// He accepts, the server issues a token, and the Receiver runs the sandbox.
 type Receiver struct {
-	name       string        // "tunde"
-	serverAddr string        // namd server address
-	secret     string        // server secret for token verification
-	sandbox    string        // "docker" or "process"
-	maxDur     time.Duration // hard cap — kill sandbox after this
+	name       string
+	serverAddr string
+	secret     string
+	sandbox    string
+	maxDur     time.Duration
 }
 
-// NewReceiver creates a receiver for the given peer.
 func NewReceiver(name, serverAddr, secret, sandbox string, maxDur time.Duration) *Receiver {
 	return &Receiver{
 		name:       name,
@@ -34,16 +37,13 @@ func NewReceiver(name, serverAddr, secret, sandbox string, maxDur time.Duration)
 	}
 }
 
-// Listen connects to the server's handoff coordination port and waits
-// for incoming handoff requests directed at this peer.
-//
-// When a request arrives, it prompts the user to accept or reject.
-// If accepted, it starts the sandbox and holds the session alive.
-//
-// This runs alongside the normal tunnel session — called in a goroutine
-// from cmd/namd/main.go when handoff is enabled in namd.yml.
+// Listen connects to the broker and waits for incoming handoff requests.
 func (r *Receiver) Listen() {
 	controlAddr := strings.Replace(r.serverAddr, ":9000", ":9001", 1)
+	controlAddr = strings.Replace(controlAddr, "tunnel.namd.online", "broker.namd.online", 1)
+	if strings.Contains(controlAddr, "namd.online") && !strings.Contains(controlAddr, "broker.") {
+		controlAddr = strings.Replace(controlAddr, "namd.online", "broker.namd.online", 1)
+	}
 
 	log.Printf("[handoff] receiver listening for requests as @%s", r.name)
 
@@ -55,7 +55,6 @@ func (r *Receiver) Listen() {
 			continue
 		}
 
-		// Register as a handoff receiver.
 		fmt.Fprintf(conn, "HANDOFF_RECEIVER %s\n", r.name)
 
 		reader := bufio.NewReader(conn)
@@ -66,32 +65,24 @@ func (r *Receiver) Listen() {
 			continue
 		}
 
-		resp = strings.TrimSpace(resp)
-		if resp != "RECEIVER_REGISTERED" {
-			log.Printf("[handoff] receiver: unexpected response: %q", resp)
+		if strings.TrimSpace(resp) != "RECEIVER_REGISTERED" {
 			conn.Close()
 			continue
 		}
 
-		// Wait for a handoff request — blocks until one arrives or conn closes.
 		r.waitForRequest(conn, reader)
 		conn.Close()
 	}
 }
 
-// waitForRequest blocks waiting for a HANDOFF_REQUEST message from the server.
-// When one arrives, it prompts the user and handles accept/reject.
 func (r *Receiver) waitForRequest(conn net.Conn, reader *bufio.Reader) {
 	for {
-		// Block until server sends something.
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			return // connection closed — outer loop will reconnect
+			return
 		}
 
 		line = strings.TrimSpace(line)
-
-		// Server sends: "HANDOFF_REQUEST gabriel gabriel.namd.africa 60m <encoded_token>"
 		if !strings.HasPrefix(line, "HANDOFF_REQUEST ") {
 			continue
 		}
@@ -101,14 +92,11 @@ func (r *Receiver) waitForRequest(conn net.Conn, reader *bufio.Reader) {
 			continue
 		}
 
-		from := parts[1]      // "gabriel"
-		subdomain := parts[2] // "gabriel.namd.africa"
-		duration := parts[3]  // "60m"
+		from := parts[1]
+		subdomain := parts[2]
+		duration := parts[3]
 		encodedToken := parts[4]
 
-		// The broker sends a simple token ID (not a full signed token).
-		// Full token signing is used in peer-to-peer mode.
-		// For broker-mediated handoffs, the token ID is just an identifier.
 		token := &Token{
 			ID:        encodedToken,
 			From:      from,
@@ -117,7 +105,6 @@ func (r *Receiver) waitForRequest(conn net.Conn, reader *bufio.Reader) {
 			ExpiresAt: time.Now().Add(r.maxDur),
 		}
 
-		// Prompt the user.
 		fmt.Printf("\n")
 		fmt.Printf("╔══════════════════════════════════════════════════╗\n")
 		fmt.Printf("║           HANDOFF REQUEST RECEIVED               ║\n")
@@ -138,12 +125,11 @@ func (r *Receiver) waitForRequest(conn net.Conn, reader *bufio.Reader) {
 			continue
 		}
 
-		// Accept — send confirmation to server.
-		fmt.Fprintf(conn, "HANDOFF_ACCEPT %s\n", token.ID)
-
-		// Start the sandbox.
 		log.Printf("[handoff] accepted — starting sandbox for @%s", from)
 		log.Printf("[handoff] %s will route here for %s", subdomain, duration)
+
+		sandboxAddr := "localhost:18080"
+		fmt.Fprintf(conn, "HANDOFF_ACCEPT %s %s\n", token.ID, sandboxAddr)
 
 		if err := r.runSandbox(token); err != nil {
 			log.Printf("[handoff] sandbox error: %v", err)
@@ -153,41 +139,19 @@ func (r *Receiver) waitForRequest(conn net.Conn, reader *bufio.Reader) {
 	}
 }
 
-// runSandbox starts the forwarded server in isolation and blocks until
-// it exits or the token expires — whichever comes first.
-//
-// The sandbox receives tunnel traffic on a local port and forwards it
-// to a minimal HTTP process running inside the sandbox environment.
-//
-// For now we implement the "process" sandbox — runs as a subprocess.
-// Docker sandbox is the same but wrapped in: docker run --rm -p ...
 func (r *Receiver) runSandbox(token *Token) error {
-	// Create a context that cancels when the token expires.
-	// context.WithDeadline returns a context and a cancel function.
-	// When the deadline passes, ctx.Done() is closed — any operation
-	// using this context is cancelled.
 	ctx, cancel := context.WithDeadline(context.Background(), token.ExpiresAt)
 	defer cancel()
 
 	switch r.sandbox {
 	case "docker":
 		return r.runDockerSandbox(ctx, token)
-	case "process", "":
-		return r.runProcessSandbox(ctx, token)
 	default:
-		return fmt.Errorf("unknown sandbox type: %q", r.sandbox)
+		return r.runProcessSandbox(ctx, token)
 	}
 }
 
-// runProcessSandbox runs a minimal forwarding proxy as a subprocess.
-// This is a lightweight sandbox — no Docker required.
-// The subprocess forwards traffic from a local port to a configurable target.
-//
-// In a full implementation, gabriel would send his server binary or config
-// over the tunnel connection and we would run it here.
-// For Phase 10 we run a simple static file server as a placeholder.
 func (r *Receiver) runProcessSandbox(ctx context.Context, token *Token) error {
-	// Use a high port to avoid conflicts — 18080 is arbitrary.
 	sandboxPort := "18080"
 
 	log.Printf("[handoff] sandbox: process mode on :%s", sandboxPort)
@@ -196,16 +160,6 @@ func (r *Receiver) runProcessSandbox(ctx context.Context, token *Token) error {
 		token.TimeRemaining().Round(time.Minute),
 	)
 
-	// Start a simple Python HTTP server as a placeholder sandbox.
-	// In the full implementation, gabriel sends his namd.yml config
-	// and we start namd itself inside the sandbox pointing at a
-	// received binary or Docker image.
-	//
-	// exec.CommandContext creates a command tied to a context.
-	// When ctx is cancelled (token expires), the command is killed.
-	// os.Args[0] = the namd binary itself — we reuse it in a special mode.
-	//
-	// For now: run a simple echo server to prove the sandbox works.
 	cmd := exec.CommandContext(ctx,
 		"node", "-e",
 		fmt.Sprintf(
@@ -213,8 +167,6 @@ func (r *Receiver) runProcessSandbox(ctx context.Context, token *Token) error {
 			r.name, token.From, sandboxPort, sandboxPort,
 		),
 	)
-
-	// Connect subprocess stdout/stderr to our output so we see its logs.
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -222,43 +174,119 @@ func (r *Receiver) runProcessSandbox(ctx context.Context, token *Token) error {
 		return fmt.Errorf("sandbox: cannot start process: %w", err)
 	}
 
-	// Wait for the process to exit OR the context to expire.
+	time.Sleep(500 * time.Millisecond)
+
+	go r.openHandoffTunnel(ctx, token, sandboxPort)
+
 	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
+	go func() { done <- cmd.Wait() }()
 
 	select {
 	case err := <-done:
-		// Process exited on its own.
 		return err
 	case <-ctx.Done():
-		// Token expired — kill the process.
 		log.Printf("[handoff] sandbox: token expired — killing sandbox")
 		cmd.Process.Kill()
 		return fmt.Errorf("handoff expired after %s", r.maxDur)
 	}
 }
 
-// runDockerSandbox runs the sandbox inside a Docker container.
-// Stronger isolation — container cannot access host filesystem or network.
-// Requires Docker to be installed on the receiver's machine.
+func (r *Receiver) openHandoffTunnel(ctx context.Context, token *Token, sandboxPort string) {
+	credsData, err := os.ReadFile(os.Getenv("HOME") + "/.namd/credentials")
+	if err != nil {
+		log.Printf("[handoff] cannot read credentials: %v", err)
+		return
+	}
+
+	var creds struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(credsData, &creds); err != nil || creds.Token == "" {
+		log.Printf("[handoff] cannot parse credentials: %v", err)
+		return
+	}
+
+	log.Printf("[handoff] opening tunnel under @%s via %s", token.From, r.serverAddr)
+
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{Timeout: 10 * time.Second},
+		"tcp", r.serverAddr, tlsCfg,
+	)
+	if err != nil {
+		log.Printf("[handoff] cannot connect to server: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	fmt.Fprintf(conn, "HANDOFF_TUNNEL %s %s %s\n", token.From, creds.Token, token.ID)
+
+	reader := bufio.NewReader(conn)
+	resp, err := reader.ReadString('\n')
+	if err != nil || strings.TrimSpace(resp) != "AUTH_OK" {
+		log.Printf("[handoff] tunnel auth failed: err=%v resp=%q", err, resp)
+		return
+	}
+
+	log.Printf("[handoff] tunnel auth ok — setting up yamux")
+
+	cfg := yamux.DefaultConfig()
+	cfg.LogOutput = io.Discard
+	session, err := yamux.Client(conn, cfg)
+	if err != nil {
+		log.Printf("[handoff] yamux failed: %v", err)
+		return
+	}
+	defer session.Close()
+
+	// Accept and discard the control stream OK message from server.
+	ctrl, err := session.Accept()
+	if err != nil {
+		log.Printf("[handoff] control stream failed: %v", err)
+		return
+	}
+	io.Copy(io.Discard, ctrl)
+	ctrl.Close()
+
+	log.Printf("[handoff] tunnel open — %s.namd.online → localhost:%s", token.From, sandboxPort)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		stream, err := session.Accept()
+		if err != nil {
+			return
+		}
+
+		go func(s net.Conn) {
+			defer s.Close()
+			sandboxConn, err := net.Dial("tcp", "localhost:"+sandboxPort)
+			if err != nil {
+				return
+			}
+			defer sandboxConn.Close()
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() { defer wg.Done(); io.Copy(sandboxConn, s) }()
+			go func() { defer wg.Done(); io.Copy(s, sandboxConn) }()
+			wg.Wait()
+		}(stream)
+	}
+}
+
 func (r *Receiver) runDockerSandbox(ctx context.Context, token *Token) error {
 	sandboxPort := "18080"
-
-	log.Printf("[handoff] sandbox: docker mode")
-
-	// docker run --rm removes the container when it exits.
-	// -p 18080:18080 maps the container port to host.
-	// --network bridge isolates container networking.
-	// node:alpine is a tiny Node.js image.
 	cmd := exec.CommandContext(ctx,
 		"docker", "run", "--rm",
 		"--name", fmt.Sprintf("namd-handoff-%s", token.ID[:8]),
 		"-p", sandboxPort+":"+sandboxPort,
 		"--network", "bridge",
-		"--memory", "256m", // cap memory usage
-		"--cpus", "0.5", // cap CPU usage
+		"--memory", "256m",
+		"--cpus", "0.5",
 		"node:alpine",
 		"node", "-e",
 		fmt.Sprintf(
@@ -266,13 +294,11 @@ func (r *Receiver) runDockerSandbox(ctx context.Context, token *Token) error {
 			r.name, token.From, sandboxPort,
 		),
 	)
-
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		// Docker might not be installed — fall back to process sandbox.
-		log.Printf("[handoff] docker unavailable (%v) — falling back to process sandbox", err)
+		log.Printf("[handoff] docker unavailable — falling back to process sandbox")
 		return r.runProcessSandbox(ctx, token)
 	}
 
@@ -283,8 +309,6 @@ func (r *Receiver) runDockerSandbox(ctx context.Context, token *Token) error {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		log.Printf("[handoff] sandbox: docker container killed (token expired)")
-		// Docker handles cleanup via --rm flag.
 		return nil
 	}
 }

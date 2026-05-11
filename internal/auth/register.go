@@ -52,7 +52,11 @@ func Register(serverAddr, name, email string) (*Credentials, error) {
 	// Connect to the registration port.
 	// We use a separate port (:9002) so registration traffic
 	// does not mix with tunnel traffic on :9000.
+	// Use registry.namd.online for registration to bypass Cloudflare.
 	regAddr := strings.Replace(serverAddr, ":9000", ":9002", 1)
+	if strings.Contains(regAddr, "namd.online") {
+		regAddr = strings.Replace(regAddr, "namd.online", "registry.namd.online", 1)
+	}
 
 	log.Info("registering", logger.Fields{
 		"name":   name,

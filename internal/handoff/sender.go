@@ -60,7 +60,14 @@ func (s *Sender) Initiate() (*Token, error) {
 	// Connect to the server's handoff coordination port.
 	// We use a separate port (:9001) so handoff traffic does not
 	// interfere with the normal tunnel connection on :9000.
-	controlAddr := strings.Replace(s.req.ServerAddr, ":9000", ":9001", 1)
+	// serverAddr is already tunnel.namd.online:9000.
+	// Replace with broker.namd.online:9001 for the handoff broker.
+	serverAddr := s.req.ServerAddr
+	controlAddr := strings.Replace(serverAddr, ":9000", ":9001", 1)
+	controlAddr = strings.Replace(controlAddr, "tunnel.namd.online", "broker.namd.online", 1)
+	if strings.Contains(controlAddr, "namd.online") && !strings.Contains(controlAddr, "broker.") {
+		controlAddr = strings.Replace(controlAddr, "namd.online", "broker.namd.online", 1)
+	}
 	conn, err := net.DialTimeout("tcp", controlAddr, 10*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("handoff: cannot connect to server: %w", err)

@@ -29,6 +29,9 @@ type PeerInfo struct {
 func LookupPeer(serverAddr, peerName string) (*PeerInfo, error) {
 	// Connect to the server's query port.
 	queryAddr := strings.Replace(serverAddr, ":9000", ":9002", 1)
+	if strings.Contains(queryAddr, "namd.online") {
+		queryAddr = strings.Replace(queryAddr, "namd.online", "registry.namd.online", 1)
+	}
 
 	conn, err := net.DialTimeout("tcp", queryAddr, 10*time.Second)
 	if err != nil {

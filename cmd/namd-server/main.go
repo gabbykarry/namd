@@ -118,7 +118,7 @@ func main() {
 	})
 
 	go listenForClients(registry, accounts, cfg, adminStore)
-	go listenHandoffBroker(broker)
+	go listenHandoffBroker(broker, registry)
 	go listenRegistry(accounts, adminStore)
 	go func() {
 		adminSrv := admin.NewServer(9003, adminToken, adminStore)
@@ -183,6 +183,63 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 
 	// New protocol: "HELLO <name> <token>"
 	// Old protocol: "HELLO <name>" — rejected for public server
+	// HANDOFF_TUNNEL — receiver opens tunnel under sender's name.
+	// Format: "HANDOFF_TUNNEL <sender_name> <receiver_token> <handoff_id>"
+	// The receiver uses their own auth token but registers under the sender's name.
+	// This reroutes sender's subdomain to receiver's sandbox.
+	if strings.HasPrefix(message, "HANDOFF_TUNNEL ") {
+		parts := strings.Fields(message)
+		if len(parts) < 4 {
+			fmt.Fprintf(conn, "ERROR invalid HANDOFF_TUNNEL format\n")
+			return
+		}
+		senderName := parts[1]    // gabriel — tunnel to register under
+		receiverToken := parts[2] // tunde's auth token
+		// parts[3] = handoff ID (for audit)
+
+		// Verify receiver's token is valid (any registered account).
+		if err := accounts.VerifyAny(receiverToken, clientIP); err != nil {
+			fmt.Fprintf(conn, "ERROR %s\n", err.Error())
+			return
+		}
+
+		fmt.Fprintf(conn, "AUTH_OK\n")
+
+		// Wrap the buffered reader with the conn so yamux reads buffered bytes first.
+		multiConn := &readerConn{Reader: io.MultiReader(reader, conn), Conn: conn}
+		session, err := transport.WrapServerSide(senderName, multiConn)
+		if err != nil {
+			return
+		}
+		defer session.Close()
+
+		ctrlStream, err := session.OpenStream()
+		if err != nil {
+			return
+		}
+
+		// Remove existing sender tunnel and register this one.
+		registry.Remove(senderName)
+		if err := registry.Add(session); err != nil {
+			fmt.Fprintf(ctrlStream, "ERROR %s\n", err.Error())
+			ctrlStream.Close()
+			return
+		}
+		defer registry.Remove(senderName)
+
+		publicURL := buildTunnelURL(senderName, cfg)
+		fmt.Fprintf(ctrlStream, "OK %s\n", publicURL)
+		ctrlStream.Close()
+		log.Printf("[server] handoff tunnel active: %s → receiver sandbox", publicURL)
+
+		for {
+			_, err := session.AcceptStream()
+			if err != nil {
+				return
+			}
+		}
+	}
+
 	if !strings.HasPrefix(message, "HELLO ") {
 		log.Printf("[server] invalid handshake from %s: %q", clientIP, message)
 		return
@@ -209,13 +266,20 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 	// Verify the token against the account store.
 	if err := accounts.Verify(name, token, clientIP); err != nil {
 		fmt.Fprintf(conn, "ERROR %s\n", err.Error())
+		if adminStore != nil {
+			adminStore.AddAuditEvent("auth_failed", name, clientIP, err.Error())
+		}
 		return
+	}
+	if adminStore != nil {
+		adminStore.AddAuditEvent("auth_ok", name, clientIP, "")
 	}
 
 	// Check if account is banned.
 	if adminStore != nil && adminStore.IsBanned(name) {
 		fmt.Fprintf(conn, "ERROR account is suspended\n")
 		slog.Audit("auth_failed", logger.Fields{"name": name, "ip": clientIP, "reason": "banned"})
+		adminStore.AddAuditEvent("auth_failed", name, clientIP, "account_banned")
 		return
 	}
 
@@ -251,12 +315,19 @@ func handleClient(conn net.Conn, registry *tunnel.Registry, accounts *auth.Accou
 	defer func() {
 		registry.Remove(name)
 		log.Printf("[server] tunnel removed for %q", name)
+		if adminStore != nil {
+			adminStore.AddAuditEvent("tunnel_disconnected", name, clientIP, "")
+		}
 	}()
 
 	publicURL := buildTunnelURL(name, cfg)
 	fmt.Fprintf(ctrlStream, "OK %s\n", publicURL)
 	ctrlStream.Close()
 	log.Printf("[server] tunnel registered for %q -> %s", name, publicURL)
+
+	if adminStore != nil {
+		adminStore.AddAuditEvent("tunnel_connected", name, clientIP, publicURL)
+	}
 
 	// Register in admin store so admin panel shows this tunnel.
 	// Pass a disconnect function so admin can force-close it.
@@ -471,7 +542,7 @@ func (b *handoffBroker) get(name string) (net.Conn, bool) {
 	return conn, ok
 }
 
-func listenHandoffBroker(broker *handoffBroker) {
+func listenHandoffBroker(broker *handoffBroker, registry *tunnel.Registry) {
 	ln, err := net.Listen("tcp", ":9001")
 	if err != nil {
 		log.Fatalf("[broker] cannot listen :9001: %v", err)
@@ -485,11 +556,11 @@ func listenHandoffBroker(broker *handoffBroker) {
 			log.Printf("[broker] accept error: %v", err)
 			return
 		}
-		go handleBrokerConn(conn, broker)
+		go handleBrokerConn(conn, broker, registry)
 	}
 }
 
-func handleBrokerConn(conn net.Conn, broker *handoffBroker) {
+func handleBrokerConn(conn net.Conn, broker *handoffBroker, registry *tunnel.Registry) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
@@ -521,7 +592,7 @@ func handleBrokerConn(conn net.Conn, broker *handoffBroker) {
 			return
 		}
 		from, to, subdomain, duration := parts[1], parts[2], parts[3], parts[4]
-		brokerHandoff(conn, broker, from, to, subdomain, duration)
+		brokerHandoff(conn, broker, registry, from, to, subdomain, duration)
 
 	case strings.HasPrefix(line, "HANDOFF_CANCEL "):
 		parts := strings.Fields(line)
@@ -538,7 +609,7 @@ func handleBrokerConn(conn net.Conn, broker *handoffBroker) {
 // brokerHandoff is the core coordination logic.
 // Runs on the sender's goroutine. Communicates with the receiver's
 // goroutine via the receiver's stored net.Conn.
-func brokerHandoff(senderConn net.Conn, broker *handoffBroker, from, to, subdomain, duration string) {
+func brokerHandoff(senderConn net.Conn, broker *handoffBroker, registry *tunnel.Registry, from, to, subdomain, duration string) {
 	log.Printf("[broker] handoff request: @%s -> @%s (%s for %s)", from, to, subdomain, duration)
 
 	// Find the receiver.
@@ -589,8 +660,22 @@ func brokerHandoff(senderConn net.Conn, broker *handoffBroker, from, to, subdoma
 	select {
 	case resp := <-respCh:
 		if strings.HasPrefix(resp, "HANDOFF_ACCEPT") {
+			// Parse sandbox address from: "HANDOFF_ACCEPT <token_id> <sandbox_addr>"
+			parts := strings.Fields(resp)
+			sandboxAddr := ""
+			if len(parts) >= 3 {
+				sandboxAddr = parts[2]
+			}
+
+			log.Printf("[broker] handoff confirmed — @%s -> @%s sandbox=%s", from, to, sandboxAddr)
+
+			// Reroute: if we have a sandbox address, open a connection to it
+			// and register it as the new tunnel for the subdomain.
+			if sandboxAddr != "" && registry != nil {
+				go rerouteTunnel(registry, subdomain, sandboxAddr, from)
+			}
+
 			fmt.Fprintf(senderConn, "CONFIRMED %s\n", tokenID)
-			log.Printf("[broker] handoff confirmed — @%s -> @%s token=%s", from, to, tokenID)
 		} else {
 			reason := strings.TrimPrefix(resp, "HANDOFF_REJECT ")
 			fmt.Fprintf(senderConn, "REJECTED %s\n", reason)
@@ -671,6 +756,7 @@ func handleRegistryConn(conn net.Conn, accounts *auth.AccountStore, adminStore *
 	log.Printf("[registry] registered @%s", req.Name)
 	if adminStore != nil {
 		adminStore.RegisterAccount(req.Name, req.Email, "")
+		adminStore.AddAuditEvent("account_registered", req.Name, conn.RemoteAddr().String(), req.Email)
 	}
 	resp := auth.RegisterResponse{Success: true, Name: req.Name, Message: "registered successfully"}
 	writeJSON(conn, resp)
@@ -747,4 +833,58 @@ func serveLandingPage(conn net.Conn, req *http.Request) {
 		len(data),
 	)
 	conn.Write(data)
+}
+
+// rerouteTunnel opens a direct TCP connection to the receiver's sandbox
+// and registers it in the tunnel registry under the original subdomain name.
+// After this, traffic for subdomain.namd.online flows to the sandbox.
+func rerouteTunnel(registry *tunnel.Registry, subdomain, sandboxAddr, originalOwner string) {
+	log.Printf("[broker] rerouting %s -> %s (sandbox)", subdomain, sandboxAddr)
+
+	// Connect to receiver's sandbox.
+	conn, err := net.DialTimeout("tcp", sandboxAddr, 10*time.Second)
+	if err != nil {
+		log.Printf("[broker] cannot connect to sandbox at %s: %v", sandboxAddr, err)
+		return
+	}
+
+	// Wrap in yamux so we can multiplex requests to the sandbox.
+	session, err := transport.WrapServerSide(subdomain+"-handoff", conn)
+	if err != nil {
+		log.Printf("[broker] cannot wrap sandbox connection: %v", err)
+		conn.Close()
+		return
+	}
+
+	// Remove the original owner's tunnel and register the sandbox session.
+	registry.Remove(originalOwner)
+	if err := registry.Add(session); err != nil {
+		// If original is already gone, try with the subdomain name.
+		log.Printf("[broker] reroute: cannot add sandbox session: %v", err)
+		session.Close()
+		return
+	}
+
+	log.Printf("[broker] rerouted %s.namd.online → sandbox at %s", subdomain, sandboxAddr)
+
+	// Keep the session alive until it closes.
+	for {
+		_, err := session.AcceptStream()
+		if err != nil {
+			log.Printf("[broker] sandbox session ended for %s", subdomain)
+			registry.Remove(subdomain + "-handoff")
+			return
+		}
+	}
+}
+
+// readerConn wraps a net.Conn replacing its Reader with a custom io.Reader.
+// Used to inject buffered bytes back into a connection before yamux reads it.
+type readerConn struct {
+	io.Reader
+	net.Conn
+}
+
+func (r *readerConn) Read(b []byte) (int, error) {
+	return r.Reader.Read(b)
 }

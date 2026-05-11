@@ -527,7 +527,13 @@ func resolveServerAddr(cfg *config.Config) string {
 		return addr
 	}
 	if cfg.Server.Addr != "" {
-		return cfg.Server.Addr
+		addr := cfg.Server.Addr
+		// Use tunnel.namd.online to bypass Cloudflare for port 9000.
+		// Cloudflare only proxies 80/443 — raw TCP on 9000 must go direct.
+		if strings.Contains(addr, "namd.online") {
+			addr = strings.Replace(addr, "namd.online", "tunnel.namd.online", 1)
+		}
+		return addr
 	}
 	return "localhost:9000"
 }

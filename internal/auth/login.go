@@ -244,3 +244,22 @@ func LoadAndVerifyCredentials() (*Credentials, error) {
 
 	return creds, nil
 }
+
+// VerifyAny checks if a token belongs to any registered account.
+// Used for HANDOFF_TUNNEL — the receiver presents their own token
+// to get permission to register a tunnel under a different name.
+func (s *AccountStore) VerifyAny(token, clientIP string) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	provided := hashToken(token)
+	for _, account := range s.accounts {
+		if account.Banned {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(account.TokenHash)) == 1 {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid credentials")
+}

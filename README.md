@@ -375,15 +375,34 @@ You can run your own namd server instead of using namd.online.
 git clone https://github.com/gabbykarry/namd
 cd namd
 
-# Build for Linux
+# Set your VPS IP — do this every time, or create Makefile.local (see below)
+# Build for Linux and deploy
 make build-linux
+make deploy-setup VPS_HOST=YOUR_VPS_IP VPS_USER=root
+```
 
-# First time setup (uploads binary, installs systemd service)
-make deploy-setup VPS_HOST=YOUR_IP VPS_USER=root
+**Tip — avoid typing your IP every time:**
 
+Create a `Makefile.local` file in the project root (it is gitignored, never committed):
+
+```makefile
+# Makefile.local — your personal deploy config, never committed
+VPS_HOST = 123.456.789.0   # replace with your actual VPS IP
+VPS_USER = root
+VPS_KEY  = ~/.ssh/id_rsa
+```
+
+Now you can just run `make deploy` without the extra flags.
+
+**After deploying:**
+
+```bash
 # Register against your own server
-export NAMD_SERVER=YOUR_IP:9000
-namd auth register --name yourname --email you@example.com
+namd auth register --name yourname --email you@example.com --server YOUR_VPS_IP:9000
+
+# Update namd.yml to point at your server
+# server:
+#   addr: YOUR_VPS_IP:9000
 
 # Connect
 namd start

@@ -160,35 +160,55 @@ func (r *Receiver) runProcessSandbox(ctx context.Context, token *Token) error {
 		token.TimeRemaining().Round(time.Minute),
 	)
 
-	cmd := exec.CommandContext(ctx,
-		"node", "-e",
-		fmt.Sprintf(
-			`require('http').createServer((req,res)=>{ res.end('Handoff active — served by @%s for @%s\n') }).listen(%s, ()=>console.log('[sandbox] listening on :%s'))`,
-			r.name, token.From, sandboxPort, sandboxPort,
-		),
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	alreadyRunning := isPortInUse(sandboxPort)
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("sandbox: cannot start process: %w", err)
+	var cmd *exec.Cmd
+
+	if alreadyRunning {
+		log.Printf("[handoff] sandbox: port :%s already in use — using existing server", sandboxPort)
+	} else {
+		log.Printf("[handoff] sandbox: nothing on :%s — starting placeholder", sandboxPort)
+		cmd = exec.CommandContext(ctx,
+			"node", "-e",
+			fmt.Sprintf(
+				`require('http').createServer((req,res)=>{ res.end('Handoff active — served by @%s for @%s\n') }).listen(%s, ()=>console.log('[sandbox] listening on :%s'))`,
+				r.name, token.From, sandboxPort, sandboxPort,
+			),
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("sandbox: cannot start placeholder: %w", err)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-
-	time.Sleep(500 * time.Millisecond)
 
 	go r.openHandoffTunnel(ctx, token, sandboxPort)
 
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		log.Printf("[handoff] sandbox: token expired — killing sandbox")
-		cmd.Process.Kill()
+	if cmd != nil {
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			log.Printf("[handoff] sandbox: token expired — killing placeholder")
+			cmd.Process.Kill()
+			return fmt.Errorf("handoff expired after %s", r.maxDur)
+		}
+	} else {
+		<-ctx.Done()
 		return fmt.Errorf("handoff expired after %s", r.maxDur)
 	}
+}
+
+func isPortInUse(port string) bool {
+	conn, err := net.DialTimeout("tcp", "localhost:"+port, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func (r *Receiver) openHandoffTunnel(ctx context.Context, token *Token, sandboxPort string) {

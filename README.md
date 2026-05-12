@@ -93,11 +93,18 @@ sudo mv namd /usr/local/bin/
 namd version
 ```
 
-**Windows:**
-
-Download `namd-windows-amd64.exe` from the [Releases page](https://github.com/gabbykarry/namd/releases/latest), rename it to `namd.exe`, and move it to a folder in your PATH (e.g. `C:\Windows\System32\`).
+**Windows (PowerShell as Administrator):**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/gabbykarry/namd/releases/latest/download/namd-windows-amd64.exe" -OutFile "C:\Windows\System32\namd.exe"
+namd version
+```
 
 Or use WSL (Windows Subsystem for Linux) and follow the Linux instructions above.
+
+**Updating on Windows:**
+```powershell
+Invoke-WebRequest -Uri "https://github.com/gabbykarry/namd/releases/latest/download/namd-windows-amd64.exe" -OutFile "C:\Windows\System32\namd.exe"
+```
 
 ---
 
@@ -137,6 +144,12 @@ namd start
 ```
 
 Your `localhost:3000` is now reachable from anywhere in the world.
+
+> **Note for Vite/React/Next.js users:** Use the built version of your app through namd, not the dev server. Dev servers use browser-native ES module handling that breaks through proxies.
+> ```bash
+> npm run build
+> npx serve dist -p 3000
+> ```
 
 ---
 

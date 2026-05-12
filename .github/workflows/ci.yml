@@ -43,17 +43,23 @@ jobs:
           mkdir -p dist
           VERSION=${GITHUB_REF_NAME}
 
-          GOOS=darwin  GOARCH=arm64 go build -ldflags "-X github.com/gabbykarry/namd/pkg/version.Version=${VERSION}" -o dist/namd-darwin-arm64  ./cmd/namd
-          GOOS=darwin  GOARCH=amd64 go build -ldflags "-X github.com/gabbykarry/namd/pkg/version.Version=${VERSION}" -o dist/namd-darwin-amd64  ./cmd/namd
-          GOOS=linux   GOARCH=amd64 go build -ldflags "-X github.com/gabbykarry/namd/pkg/version.Version=${VERSION}" -o dist/namd-linux-amd64   ./cmd/namd
-          GOOS=linux   GOARCH=arm64 go build -ldflags "-X github.com/gabbykarry/namd/pkg/version.Version=${VERSION}" -o dist/namd-linux-arm64   ./cmd/namd
-          GOOS=windows GOARCH=amd64 go build -ldflags "-X github.com/gabbykarry/namd/pkg/version.Version=${VERSION}" -o dist/namd-windows-amd64.exe ./cmd/namd
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          LDFLAGS="-X github.com/gabbykarry/namd/pkg/version.Version=${VERSION} -X github.com/gabbykarry/namd/pkg/version.Commit=${COMMIT} -X github.com/gabbykarry/namd/pkg/version.Date=${DATE}"
+
+          GOOS=darwin  GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/namd-darwin-arm64  ./cmd/namd
+          GOOS=darwin  GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/namd-darwin-amd64  ./cmd/namd
+          GOOS=linux   GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/namd-linux-amd64   ./cmd/namd
+          GOOS=linux   GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o dist/namd-linux-arm64   ./cmd/namd
+          GOOS=windows GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o dist/namd-windows-amd64.exe ./cmd/namd
 
           ls -la dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          draft: false
+          prerelease: false
           name: namd ${{ github.ref_name }}
           body: |
             ## Install namd ${{ github.ref_name }}

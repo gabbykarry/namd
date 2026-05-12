@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -212,7 +213,8 @@ func isPortInUse(port string) bool {
 }
 
 func (r *Receiver) openHandoffTunnel(ctx context.Context, token *Token, sandboxPort string) {
-	credsData, err := os.ReadFile(os.Getenv("HOME") + "/.namd/credentials")
+	homedir, _ := os.UserHomeDir()
+	credsData, err := os.ReadFile(filepath.Join(homedir, ".namd", "credentials"))
 	if err != nil {
 		log.Printf("[handoff] cannot read credentials: %v", err)
 		return

@@ -447,6 +447,14 @@ go run main.go</pre>
 	}
 	defer localConn.Close()
 
+	// Use HTTP/1.1 to ensure proper header forwarding for modern apps
+	// (Vite, Next.js etc use ES modules which require correct MIME type headers).
+	req.Proto = "HTTP/1.1"
+	req.ProtoMajor = 1
+	req.ProtoMinor = 1
+	if req.Host == "" {
+		req.Host = fmt.Sprintf("localhost:%s", addr[strings.LastIndex(addr, ":")+1:])
+	}
 	if err := req.Write(localConn); err != nil {
 		return
 	}
